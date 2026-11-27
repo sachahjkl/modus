@@ -56,5 +56,6 @@
   "doom": ["doom_scenario.odin"],
   "roles_display": ["roles_display_scenario.odin"],
   "gigabyte_pages": ["pdpe1gb_scenario.odin"],
-  "bootstrap": ["bootstrap_scenario.odin"]
+  "bootstrap": ["bootstrap_scenario.odin"],
+  "browser_machine": ["browser_machine_scenario.odin"]
 }

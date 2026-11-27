@@ -222,7 +222,9 @@ integer_two_byte_step :: proc "contextless" (cpu: ^Processor_State, physical_mem
 		}
 		source := read_register(cpu, modrm.reg_index, width, prefixes.has_rex)
 		result, changed := execute_double_shift(cpu, destination, source, count, width, opcode == 0xA4 || opcode == 0xA5)
-		if changed {
+		// On x86-64, a 32-bit register destination still zero-extends into the
+		// upper 32 bits even when the masked shift count is 0.
+		if changed || (modrm.is_register && width == .Bits_32) {
 			if write_outcome := write_rm_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, width, prefixes.has_rex, result); write_outcome != .Running {
 				return write_outcome, true
 			}

@@ -193,6 +193,7 @@ test_parts := [?]Test_Part {
 	{name = "roles_display", does = "The two machines of a second Display role holder: applies a plan naming `panel_display` as holder of `Role.Display`, reboots on the same disk without starting `compositor`, verifies barless 1920x1080 work areas and live Presents for `console` and `clock`, verifies `display` exports, cycles focus with Alt+Tab, and stops `clock` cleanly", procedures = {"roles_display_tests_run"}, volumes = {build.BOOT_VOLUME_PLAN_AND_AUDIT}},
 	{name = "gigabyte_pages", does = "The 4 GiB `pdpe1gb` machine: verifies refusal edges, resumable 1 GiB `Frames_Now` zeroing across `schedule()`, 1 GiB PDPT leaf mapping (`entries_1g == 1`), zeroed bytes across 2 MiB slice offsets, zero-allocation partial `Memory_Protect` demotion (`0/511/512`), data integrity, and clean 1 GiB run reclamation", procedures = {"pdpe1gb_tests_run"}, volumes = {build.BOOT_VOLUME_PLAN_AND_AUDIT}, memory_mib = 4096},
 	{name = "bootstrap", does = "The machine of live `chibicc` self-hosting and C libraries: runs `bootstrap_probe` on `plan_and_audit` to compile all 14 `chibicc` C units through `c_compiler.compile_unit` and `assemble.assemble_program` into Stage 1, loads Stage 1 via `system.module_space_load` to verify `jump.s` error handling and compile Stage 2 to the exact host `modustool c-self-host` BLAKE3 hash, and loads and executes freestanding `sqlite` (3.54.1), `lua` (5.4.7), and `zstd` (1.5.7) modules live on modus matching host module and compressed-frame BLAKE3 hashes", procedures = {"bootstrap_tests_run"}, volumes = {build.BOOT_VOLUME_PLAN_AND_AUDIT}},
+	{name = "browser_machine", does = "No machine: builds the WebAssembly kernel and console image, checks boot-image instructions against `software_machine`, verifies the loopback HTTP artifact server with MIME and COOP/COEP headers, and boots the Web Console in a headless browser when available in PATH", procedures = {"browser_machine_tests_run", "browser_machine_build", "browser_machine_console_write"}, volumes = {build.BOOT_VOLUME}, starts_no_machine = true},
 }
 
 // test_part_find gives the row of a part by its name.
@@ -411,9 +412,10 @@ test_arguments_give_inputs :: proc(args: []string) -> (folder: string, given: bo
 // boot image that the part's setup reads from build/modules/.
 test_part_fast_filter :: proc(part_name: string) -> (filter_modules: bool, extra_modules: []string) {
 	switch part_name {
-	case "host_modules", "release_image":
+	case "host_modules", "release_image", "browser_machine":
 		// host_modules checks every module description; release_image compares
-		// BOOT_VOLUME_SECURE_BOOT against BOOT_IMAGE.
+		// BOOT_VOLUME_SECURE_BOOT against BOOT_IMAGE; browser_machine packages
+		// page and console images from BOOT_IMAGE.
 		return false, nil
 	case "disk_processes":
 		@(static) disk_extras := [3]string{foundation.DISK_MODULE_NAME, foundation.STORE_LIBRARY_MODULE, foundation.STORE_IMPORTER_MODULE}

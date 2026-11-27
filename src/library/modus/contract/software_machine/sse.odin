@@ -181,11 +181,11 @@ float_from_f64 :: #force_inline proc "contextless" (value: f64, precision: Float
 // float_result gives the bits of a computed value and the exceptions of
 // its rounding: a NaN from operands that are numbers is the invalid
 // result, a value that grew to infinity from finite operands overflows,
-// and a tiny result underflows: flushed to zero with flush-to-zero and the
-// underflow masked. The precision flag is set only with an overflow or a
-// flush (browser_machine.md, "The vector instructions").
+// and a tiny result underflows: always when unmasked, flushed to zero with
+// flush-to-zero when masked, and with masked underflow when the tiny result
+// lost precision (IEEE-754 tininess and inexactness).
 @(private = "file")
-float_result :: proc "contextless" (value: f64, precision: Float_Precision, mxcsr: u32, operands_finite: bool, raised_before: Simd_Exceptions) -> (bits: u64, raised: Simd_Exceptions) {
+float_result :: proc "contextless" (value: f64, precision: Float_Precision, mxcsr: u32, operands_finite: bool, raised_before: Simd_Exceptions, double_underflow_inexact := false) -> (bits: u64, raised: Simd_Exceptions) {
 	raised = raised_before
 	layout := float_layout(precision)
 	if value != value {
@@ -195,7 +195,7 @@ float_result :: proc "contextless" (value: f64, precision: Float_Precision, mxcs
 	if float_is_infinite(bits, precision) && operands_finite && .Divide_By_Zero not_in raised {
 		raised += {.Overflow, .Precision}
 	}
-	tiny := float_is_denormal(bits, precision) || (float_is_zero(bits, precision) && value != 0)
+	tiny := float_is_denormal(bits, precision) || (float_is_zero(bits, precision) && (value != 0 || double_underflow_inexact))
 	if tiny {
 		underflow_masked := (mxcsr >> (MXCSR_EXCEPTION_MASK_SHIFT + u32(Simd_Exception.Underflow))) & 1 != 0
 		if !underflow_masked {
@@ -203,9 +203,89 @@ float_result :: proc "contextless" (value: f64, precision: Float_Precision, mxcs
 		} else if mxcsr & MXCSR_FLUSH_TO_ZERO != 0 {
 			bits &= layout.sign
 			raised += {.Underflow, .Precision}
+		} else {
+			inexact := (float_to_f64(bits, .Single) != value) if precision == .Single else double_underflow_inexact
+			if inexact {
+				raised += {.Underflow, .Precision}
+			}
 		}
 	}
 	return bits, raised
+}
+
+// double_tiny_mul_or_div_inexact checks whether a tiny double-precision
+// product or quotient lost precision (subnormal rounding or underflow to zero).
+@(private = "file")
+double_tiny_mul_or_div_inexact :: proc "contextless" (operation: Float_Operation, first, second, result_bits: u64) -> bool {
+	if float_is_zero(first, .Double) || float_is_zero(second, .Double) {
+		return false
+	}
+	if float_is_infinite(first, .Double) || float_is_infinite(second, .Double) {
+		return false
+	}
+	if float_is_zero(result_bits, .Double) {
+		return true
+	}
+	if !float_is_denormal(result_bits, .Double) {
+		return false
+	}
+	// Decompose normalized significand and unbiased binary exponent for exact check.
+	decode_f64 :: proc "contextless" (bits: u64) -> (sig: u64, exp: i32) {
+		raw_exp := i32((bits >> 52) & 0x7FF)
+		frac := bits & 0x000F_FFFF_FFFF_FFFF
+		if raw_exp == 0 {
+			return frac, -1074
+		}
+		return (u64(1) << 52) | frac, raw_exp - 1023 - 52
+	}
+	sa, ea := decode_f64(first)
+	sb, eb := decode_f64(second)
+	sr, er := decode_f64(result_bits) // denormal: er == -1074
+	if operation == .Multiply {
+		// Exact iff sa * sb * 2^(ea + eb) == sr * 2^er.
+		lo, hi := multiply_u64_to_u128(sa, sb)
+		shift := er - (ea + eb)
+		if shift <= 0 {
+			return false
+		}
+		if shift >= 128 {
+			return true
+		}
+		if shift >= 64 {
+			if lo != 0 {
+				return true
+			}
+			rem_shift := uint(shift - 64)
+			mask := (u64(1) << rem_shift) - 1 if rem_shift < 64 else max(u64)
+			return (hi & mask) != 0
+		}
+		mask := (u64(1) << uint(shift)) - 1
+		return (lo & mask) != 0
+	}
+	if operation == .Divide {
+		// Exact iff sa * 2^ea == sr * sb * 2^(er + eb).
+		lo, hi := multiply_u64_to_u128(sr, sb)
+		shift := ea - (er + eb)
+		if shift < 0 {
+			neg := uint(-shift)
+			if neg >= 128 {
+				return true
+			}
+			if neg >= 64 {
+				return lo != 0 || (hi >> (neg - 64)) != sa || ((hi & ((u64(1) << (neg - 64)) - 1)) != 0)
+			}
+			shifted := (lo >> neg) | (hi << (64 - neg))
+			return (hi >> neg) != 0 || shifted != sa || (lo & ((u64(1) << neg) - 1)) != 0
+		}
+		s_u := uint(shift)
+		if s_u >= 128 {
+			return true
+		}
+		exp_lo := sa << s_u if s_u < 64 else u64(0)
+		exp_hi := (sa >> (64 - s_u)) if (s_u > 0 && s_u < 64) else (sa << (s_u - 64) if s_u >= 64 else u64(0))
+		return lo != exp_lo || hi != exp_hi
+	}
+	return false
 }
 
 // float_binary computes one lane of addps to maxsd: first a NaN operand
@@ -238,12 +318,17 @@ float_binary :: proc "contextless" (operation: Float_Operation, first, second: u
 		}
 		return float_quiet(first, precision) if first_nan else float_quiet(second, precision), raised
 	}
-	if float_is_denormal(first, precision) || float_is_denormal(second, precision) {
-		raised += {.Denormal}
-	}
 	x := float_to_f64(first, precision)
 	y := float_to_f64(second, precision)
 	operands_finite := !float_is_infinite(first, precision) && !float_is_infinite(second, precision)
+	// Per x86-64 SSE exception priority, divide-by-zero on a finite non-zero
+	// dividend takes precedence over the denormal operand flag.
+	divide_by_zero := operation == .Divide && y == 0 && x != 0 && operands_finite
+	if divide_by_zero {
+		raised += {.Divide_By_Zero}
+	} else if float_is_denormal(first, precision) || float_is_denormal(second, precision) {
+		raised += {.Denormal}
+	}
 	value: f64
 	switch operation {
 	case .Add:
@@ -253,13 +338,14 @@ float_binary :: proc "contextless" (operation: Float_Operation, first, second: u
 	case .Multiply:
 		value = x * y
 	case .Divide:
-		if y == 0 && x != 0 && operands_finite {
-			raised += {.Divide_By_Zero}
-		}
 		value = x / y
 	case .Minimum, .Maximum:
 	}
-	return float_result(value, precision, mxcsr, operands_finite, raised)
+	double_inexact := false
+	if precision == .Double && (operation == .Multiply || operation == .Divide) && operands_finite {
+		double_inexact = double_tiny_mul_or_div_inexact(operation, first, second, transmute(u64)value)
+	}
+	return float_result(value, precision, mxcsr, operands_finite, raised, double_inexact)
 }
 
 float_square_root :: proc "contextless" (operand: u64, precision: Float_Precision, mxcsr: u32) -> (result: u64, raised: Simd_Exceptions) {
@@ -279,7 +365,7 @@ float_square_root :: proc "contextless" (operand: u64, precision: Float_Precisio
 	if float_is_denormal(operand, precision) {
 		raised += {.Denormal}
 	}
-	return float_result(intrinsics.sqrt(float_to_f64(operand, precision)), precision, mxcsr, true, raised)
+	return float_result(intrinsics.sqrt(float_to_f64(operand, precision)), precision, mxcsr, !float_is_infinite(operand, precision), raised)
 }
 
 // float_reciprocal gives rcpps and rsqrtps: the processor gives an

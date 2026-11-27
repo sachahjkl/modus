@@ -19,7 +19,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Live runtime wiring for multi-machine mesh, remote roles, and store sync.** Wire the verified `machine_mesh`, `machine_sync`, `machine_wire`, and `paired_dispatch` contracts into live two-machine QEMU runs over QUIC and NAT relays. [Design](src/md/features/several_machines.md)
 - **Live runtime wiring for device services, Venus GPU, Linux SMP, and `gui_toolkit`.** Wire the verified `pci_topology`, `venus_vulkan`, `guest_os`, `rich_toolkit`, `origin_browser`, and `hardware_keys` contracts into live device-service and guest runtime loops. [Design](src/md/features/device_services.md)
 - **Several principals on one machine.** More than one named principal uses a machine, each with its own session, its own stores and its own keys, and none reads the data of another. The capacity grows only after each shared place of the system has a scope. [Design](src/md/features/several_principals.md)
-- **Software processor differential fuzzing and headless browser test part.** Check every boot-image instruction against `software_machine` via differential host fuzzing and run the browser machine test part in a headless browser. [Design](src/md/features/browser_machine.md)
 
 ## Maybe
 
