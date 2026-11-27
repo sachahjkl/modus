@@ -2598,9 +2598,6 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			if budget_spent(intrinsics.atomic_load(&thread.budget)) {
 				cpu.slice_left = 0 // The budget has no time left in this period.
 			}
-			if intrinsics.atomic_load(&thread.record_mode) == .Recording && stint_ended {
-				record_replay_stint_bound_check(thread)
-			}
 		}
 		// The first processor counts the time.
 		if cpu.index == 0 {

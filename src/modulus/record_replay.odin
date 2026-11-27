@@ -99,7 +99,6 @@ Process_Record_State :: struct {
 	handle_map:             replay_filter.Replay_Handle_Map, // Replay translation from recorded handle -> real handle.
 	recorded_budget_handle: u64, // Recorded handles[CONTEXT_BUDGET] restored into the replay context page.
 	real_budget_handle:     u64, // Real handles[CONTEXT_BUDGET] owned by the replayed process.
-	stint_start_point:      u64, // Point count when the current stint started (atomic).
 	pinned_processor:  u32, // Single processor index assigned to this process.
 	// The shared writers (shared_writers_setup). The gate
 	// is Inactive when no other process writes a page that this process
@@ -1487,38 +1486,6 @@ record_replay_on_revocation :: proc "contextless" (process_index: u32) {
 	if process_records[process_index].mode == .Recording {
 		record_replay_end_locked(process_index, .Revocation)
 	}
-}
-
-// record_replay_stint_start notes the current point count when a recorded
-// thread begins a scheduler stint.
-record_replay_stint_start :: proc "contextless" (process_index: u32) {
-	rec := &process_records[process_index]
-	if intrinsics.atomic_load(&rec.mode) == .Recording {
-		intrinsics.atomic_store(&rec.stint_start_point, intrinsics.atomic_load(&rec.writer.point_count))
-	}
-}
-
-// record_replay_stint_bound_check enforces the one-stint bound: if a recorded
-// thread ran an entire time slice without reaching any input point, end the
-// input history immediately so no peer or sibling waits indefinitely.
-// Caller holds no locks (called from VECTOR_TIMER only when strategy_tick ended
-// a full stint).
-record_replay_stint_bound_check :: proc "contextless" (thread: ^Thread) {
-	process_index := thread.process
-	rec := &process_records[process_index]
-	if intrinsics.atomic_load(&rec.mode) != .Recording {
-		return
-	}
-	if intrinsics.atomic_load(&rec.writer.point_count) != intrinsics.atomic_load(&rec.stint_start_point) {
-		return
-	}
-	control_take()
-	taken := process_lock(process_index)
-	if rec.mode == .Recording && rec.writer.point_count == intrinsics.atomic_load(&rec.stint_start_point) {
-		record_replay_end_locked(process_index, .Stint_Bound_Reached)
-	}
-	process_unlock(process_index, taken)
-	control_free()
 }
 
 // record_refresh_point_copies_locked snapshots each live shared page ONCE into

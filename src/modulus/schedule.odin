@@ -639,9 +639,6 @@ schedule :: proc "contextless" () -> ! {
 			// Two bytes of the hot line: a normal thread pays these tests only.
 			if mode := intrinsics.atomic_load(&thread.record_mode); mode != .None || thread.no_clock {
 				processor_traps_sync(cpu, true, mode != .None)
-				if mode == .Recording {
-					record_replay_stint_start(thread.process)
-				}
 			}
 			// The event point of a switch of threads (events.odin). The
 			// thread is the current thread of this processor now.
