@@ -1011,10 +1011,6 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	}
 	text_settings_open(ctx)
 	interface_font_load(ctx)
-	status: call_outcome.Call_Outcome
-	if window.ring, status = system.ring_open(window.ring_memory, error, receive_handles = true); status != .Succeeded {
-		return {}, false
-	}
 	// The size is logical; the surface is in pixels of the screen, at the
 	// scale in force (scale.odin).
 	window.width, window.height = width, height
@@ -1026,8 +1022,12 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	window.title_count = copy(window.title[:], title)
 
 	// The compositor maps the ring when the root service tells it of this
-	// process. Until then, the grant has no receiver.
+	// process. Until then, the grant has no receiver. Wait for the compositor
+	// to map the ring before mapping it here: if this process is recorded,
+	// mapping the ring first causes the kernel to refuse the compositor's
+	// later writable mapping (record_replay_map_check).
 	granted: system.Handle
+	status: call_outcome.Call_Outcome
 	// Bound the wait for the display holder to map this client's ring on a
 	// loaded machine: succeeds on the first pass when the holder is ready.
 	OPEN_RING_WAIT_ATTEMPTS :: 2000
@@ -1043,6 +1043,9 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		system.sleep(system.time() + 5)
 	}
 	if status != .Succeeded {
+		return {}, false
+	}
+	if window.ring, status = system.ring_open(window.ring_memory, error, receive_handles = true); status != .Succeeded {
 		return {}, false
 	}
 	name := system.name_pack(title)
