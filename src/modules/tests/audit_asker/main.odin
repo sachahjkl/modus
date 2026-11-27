@@ -59,6 +59,11 @@ COLLECTOR_FORWARD :: 1
 // The bound of each audit space, in records: the probes of a side fit.
 SPACE_BOUND_RECORDS :: 32
 
+// Page tables for mapping the boot image plus the display call connection and
+// wiring list page mapped before system.ready().
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
+
 requests: ring.Ring
 requests_memory: system.Handle
 next_tag: u32 = 1

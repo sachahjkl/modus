@@ -342,6 +342,33 @@ disk_load_start :: proc "contextless" () {
 	disk_load_end(.Succeeded, {})
 }
 
+// disk_module_imports_fonts reports whether a validated disk module imports
+// the boot image's drawing, text_rendering, or interface_module library.
+// Bare disk processes such as visitor and core_probe do not import font
+// libraries and keep empty storage handle slots in their context.
+@(private = "file")
+disk_module_imports_fonts :: proc "contextless" (file: []u8) -> bool {
+	if module.count(file, .Imports) <= 1 {
+		return false
+	}
+	for index in 1 ..< module.count(file, .Imports) {
+		imp, ok := module.record(file, .Imports, index, module.Import)
+		if !ok {
+			continue
+		}
+		for &entry in system.image_entries(image) {
+			if entry.hash != imp.hash {
+				continue
+			}
+			entry_name := system.name_of(entry.name[:])
+			if entry_name == "drawing" || entry_name == "text_rendering" || entry_name == "interface_module" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // disk_process_run starts a disk process from the bytes of its file, which
 // this service checked. The process receives what each process receives
 // and nothing of a start grant set: the log with the right Write, a window, the date
@@ -436,7 +463,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		system.close(store_region)
 	}
 	wants_disk_store := .Store in disk_grants
-	fonts_only := !wants_disk_store && storage_service != nil && slot.client != 0
+	fonts_only := !wants_disk_store && storage_service != nil && slot.client != 0 && disk_module_imports_fonts(file)
 	if wants_disk_store || fonts_only {
 		store_outcome: call_outcome.Call_Outcome
 		open_refusal: [7]u64

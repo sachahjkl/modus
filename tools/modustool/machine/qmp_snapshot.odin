@@ -539,11 +539,16 @@ boot_snapshot_capture :: proc(target_folder: string, inputs_folder: string) -> b
 		return false
 	}
 	clean_target := strings.trim_right(target_folder, "/")
-	vars_qcow2 := foundation.join(clean_target, "/", QMP_SNAPSHOT_VARS_FILE)
-	data_qcow2 := foundation.join(clean_target, "/", QMP_SNAPSHOT_DATA_FILE)
-	scratch_qcow2 := foundation.join(clean_target, "/", QMP_SNAPSHOT_SCRATCH_FILE)
-	boot_log_dst := foundation.join(clean_target, "/", QMP_SNAPSHOT_BOOT_LOG_FILE)
-	meta_dst := foundation.join(clean_target, "/", QMP_SNAPSHOT_META_FILE)
+	vars_qcow2 := strings.clone(foundation.join(clean_target, "/", QMP_SNAPSHOT_VARS_FILE))
+	defer delete(vars_qcow2)
+	data_qcow2 := strings.clone(foundation.join(clean_target, "/", QMP_SNAPSHOT_DATA_FILE))
+	defer delete(data_qcow2)
+	scratch_qcow2 := strings.clone(foundation.join(clean_target, "/", QMP_SNAPSHOT_SCRATCH_FILE))
+	defer delete(scratch_qcow2)
+	boot_log_dst := strings.clone(foundation.join(clean_target, "/", QMP_SNAPSHOT_BOOT_LOG_FILE))
+	defer delete(boot_log_dst)
+	meta_dst := strings.clone(foundation.join(clean_target, "/", QMP_SNAPSHOT_META_FILE))
+	defer delete(meta_dst)
 
 	ovmf_vars_src := os.get_env("OVMF_VARS", context.temp_allocator)
 	if ovmf_vars_src == "" {

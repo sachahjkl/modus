@@ -1,6 +1,5 @@
 // Local cross-principal signed grants on one machine
-// (src/md/features/several_principals.md, "A share between two principals on
-// one machine").
+// (src/md/features/several_principals.md, "The rest").
 //
 // Two principals on the same machine share a store object, tree, or role
 // contract through the exact Signed_Grant and Revocation_List contract used

@@ -521,7 +521,7 @@ start_gives_window :: proc "contextless" (work: ^Start_Work) -> bool {
 // storage connection slot leaks.
 start_wants_fonts_storage :: proc "contextless" (work: ^Start_Work) -> bool {
 	grants := work.start_grant_set.grants
-	if .Root_Ring in grants || .Terminal in grants || .Start_Policy in grants || .Clock in grants || work.hold == .For_Replay {
+	if .Root_Ring in grants || .Terminal in grants || .Start_Policy in grants || .Clock in grants || work.hold != .None {
 		return false
 	}
 	if !image_has_module(role_holder_name(.Storage)) {

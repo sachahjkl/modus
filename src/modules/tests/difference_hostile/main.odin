@@ -32,6 +32,12 @@ import "modus:system"
 // that the worker of the display reads them in several copies.
 REVOKED_ITEMS :: 4000
 ITEM_BYTES :: 9 // "item0000," with its comma.
+REVOKED_OBJECT_PAGES :: 9
+#assert(REVOKED_OBJECT_PAGES == (REVOKED_ITEMS * ITEM_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// Page tables for mapping the boot image plus the display call connection
+// opened before exit.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES, REVOKED_OBJECT_PAGES}
 
 // The decisions that plan_diff_poll gives (plans_recipes.Plan_Display_Decision).
 DECISION_PENDING :: 0
