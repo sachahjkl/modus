@@ -5,6 +5,7 @@ import "core:testing"
 import gb "modus:contract/guest_builder"
 import "modus:contract/guest_os"
 import "modus:display"
+import "modus:system"
 import terminal "modus:terminal"
 
 // The keys that send nothing first: a function key, Control with a key that
@@ -76,22 +77,22 @@ time_conversions_at_their_edges :: proc(t: ^testing.T) {
 }
 
 // The memory of the guest comes from the pages that the budget has left:
-// below the least the guest does not start, one page less than the stated
-// budget gives nothing, the stated budget gives the least guest, a larger
+// below the least the guest does not start, one page less than the least
+// guest budget gives nothing, the least budget gives the least guest, a larger
 // budget a larger guest in whole MiB, and the contract bounds the most.
 @(test)
 guest_memory_follows_the_budget :: proc(t: ^testing.T) {
-	stated := MODULE_BUDGET.working_memory_pages
-	for free in ([?]u64{0, 1, PROCESS_RESERVE_PAGES + 64, stated - 1}) {
+	least := LEAST_GUEST_BUDGET_PAGES
+	for free in ([?]u64{0, 1, PROCESS_RESERVE_PAGES + 64, least - 1}) {
 		testing.expectf(t, guest_memory_pages_of(free) == 0, "%d pages left give no guest", free)
 	}
-	testing.expect_value(t, guest_memory_pages_of(stated), GUEST_MEMORY_PAGES_LEAST)
-	larger := guest_memory_pages_of(4 * stated)
+	testing.expect_value(t, guest_memory_pages_of(least), GUEST_MEMORY_PAGES_LEAST)
+	larger := guest_memory_pages_of(4 * least)
 	testing.expect(t, larger > GUEST_MEMORY_PAGES_LEAST && larger % 256 == 0, "a larger budget gives a larger guest in whole MiB")
-	testing.expect(t, larger + larger / 512 + 64 + PROCESS_RESERVE_PAGES <= 4 * stated, "the guest and its table fit the budget")
+	testing.expect(t, larger + larger / 512 + 64 + PROCESS_RESERVE_PAGES <= 4 * least, "the guest and its table fit the budget")
 	testing.expect_value(t, guest_memory_pages_of(max(u64)), gb.MAX_GUEST_MEMORY_PAGES)
-	// This process and its guest process.
-	testing.expect(t, MODULE_BUDGET.processes >= 2)
+	// This process and its guest process; guest memory comes from the plan row, not the floor.
+	testing.expect_value(t, MODULE_BUDGET, system.Stated_Budget{processes = 2, threads = 1})
 }
 
 // The keys of moving in a line: Home, End and Delete send the sequences

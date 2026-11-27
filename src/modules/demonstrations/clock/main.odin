@@ -34,7 +34,6 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
-import "modus:contract/reference_screen"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
@@ -53,27 +52,15 @@ LEAST_HEIGHT :: 420
 LARGEST_WIDTH :: 1536
 LARGEST_HEIGHT :: 864
 
-// The tool counts the module, the thread stacks and the two pictures of the
-// window at its largest size (4050 pages, cut on each axis to the reference
-// screen as the tool counts it). The working memory of the floor holds the
-// glyph memory of both copies of text rendering (2 x 354 = 708 pages), the
-// worker stack past the default stack (48 pages) and 268 pages for tables
-// and mappings: 1024 pages. During a resize after ready, the second surface
-// (4050 pages) draws from the growth factor of the budget. The tool reads
-// the literal; the checks below tie it to these parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+// The tool counts the module, its imports, its load, its two threads and the
+// two pictures of the resizable window at the largest scale. Post-ready glyph
+// caches, the second resize surface and notifier mappings draw from clock's
+// default plan budget row.
+MODULE_BUDGET :: system.Stated_Budget{processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
-// The rule of the tool (scale_factor.window_surface_largest), from the same
-// constants: a constant cannot call the procedure. The cut holds because
-// the window is resizable with a least size within the logical screen at
-// the largest scale: the budget states that least size, and the tool checks
-// it against the call of resizable_set.
+// The least size fits inside the logical screen at the largest scale, so the
+// tool cuts the window surface to the reference screen.
 #assert(LEAST_WIDTH > 0 && LEAST_HEIGHT > 0 && LEAST_WIDTH <= scale_factor.LARGEST_LOGICAL_WIDTH && LEAST_HEIGHT <= scale_factor.LARGEST_LOGICAL_HEIGHT)
-WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
-WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
-SECOND_SURFACE_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(MODULE_BUDGET.working_memory_pages == 268 + 2 * display.TEXT_MEMORY_PAGES + 48)
-#assert(2 * (SECOND_SURFACE_PAGES + MODULE_BUDGET.working_memory_pages) >= 2 * SECOND_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES + 48)
 
 MARGIN :: graphics.MARGIN
 GAP :: graphics.GAP

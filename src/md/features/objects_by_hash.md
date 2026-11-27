@@ -39,7 +39,7 @@ Each new kind of data added a code path in the root service and a contract of co
 
 The boot image carries objects as a transport. The build tool packs a canonical read-only **image tree** manifest (`modus:contract/image_tree`, resource `image_tree`) inside the boot image beside the data files. The manifest maps nested, strictly sorted UTF-8 entry names to boot-image resource entries (`image_entry_index`, `size`, and BLAKE3 `hash`).
 
-The image tree excludes root-only boot and trust records: `system_description`, `system_description_signature`, `start_list`, `rescue_list`, `replacement_list`, `test_plan_values`, and `measure_run`. Both the manifest validator and the boot-image cross-check refuse any entry that names or points to one of these records. The terms "resource" and "resource of the boot image" leave the glossary and the guides.
+The image tree excludes root-only boot and trust records: `system_description`, `system_description_signature`, `start_list`, `rescue_list`, `replacement_list`, `default_plan_values`, `test_plan_values`, and `measure_run`. Both the manifest validator and the boot-image cross-check refuse any entry that names or points to one of these records. The terms "resource" and "resource of the boot image" leave the glossary and the guides.
 
 ### 2. Storage starts first and decouples image tree from disk
 

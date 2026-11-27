@@ -143,13 +143,18 @@ build_modules :: proc(needed_volumes: []string = nil, filter_for_volumes := fals
 		// resource, for the process manual (manual_link_pages.odin).
 		link_pages := build_manual_pages(module_filter) or_return
 		build_measure_step("the link pages of the manual", step_started)
-		// The plan values of the test image (limits, log_flood): signed with the
-		// test boot images and stripped from the release boot image (test_plan.odin).
+		// The default plan values of shipped modules: signed into both test and
+		// release boot images (default_plan.odin).
+		default_plan_resource := default_plan_values_write() or_return
+		// The plan values of the test image (limits, log_flood, pdpe1gb_probe):
+		// signed with the test boot images and stripped from the release boot
+		// image (test_plan.odin).
 		test_plan_resource := test_plan_values_write() or_return
 		append(&all_resources, ..pointer_themes)
 		append(&all_resources, outlines_resource)
 		append(&all_resources, script_fonts_name)
 		append(&all_resources, link_pages)
+		append(&all_resources, default_plan_resource)
 		append(&all_resources, test_plan_resource)
 	}
 	step_started = time.tick_now()

@@ -48,6 +48,7 @@ image_tree_pack_maps_all_system_resources_and_excludes_boot_records :: proc(t: ^
 	outlines_bytes: string = "font-outlines-data"
 	script_bytes: string = "script-fonts-name-32-byte-digest"
 	manual_bytes: string = "manual-pages-data"
+	default_plan_bytes: string = "default-plan-data"
 	test_plan_bytes: string = "test-plan-data"
 	start_bytes: string = "start-list-data"
 	rescue_bytes: string = "rescue-list-data"
@@ -62,6 +63,7 @@ image_tree_pack_maps_all_system_resources_and_excludes_boot_records :: proc(t: ^
 		Image_File{name = font_outlines.RESOURCE_NAME, file = transmute([]u8)outlines_bytes},
 		Image_File{name = font_outlines.SCRIPT_FONTS_NAME_RESOURCE, file = transmute([]u8)script_bytes},
 		Image_File{name = manual_pages.RESOURCE_NAME, file = transmute([]u8)manual_bytes},
+		Image_File{name = plan_values.DEFAULT_IMAGE_PLAN_RESOURCE, file = transmute([]u8)default_plan_bytes},
 		Image_File{name = plan_values.TEST_IMAGE_PLAN_RESOURCE, file = transmute([]u8)test_plan_bytes},
 		Image_File{name = start_list.START_LIST_RESOURCE, file = transmute([]u8)start_bytes},
 		Image_File{name = start_list.RESCUE_LIST_RESOURCE, file = transmute([]u8)rescue_bytes},

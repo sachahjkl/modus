@@ -9,16 +9,18 @@ import "modustool:foundation"
 import "modustool:resources"
 
 // The boot-image resource file carrying the plan values of test modules
-// (limits and log_flood). Test boot images ship it as a signed resource;
-// release_boot_image_of excludes it so release images carry no test plan rows
-// (src/md/features/module_budget_request.md).
+// (limits, log_flood, pdpe1gb_probe, and bootstrap_probe). Test boot images
+// ship it as a signed resource; release_boot_image_of excludes it so release
+// images carry no test plan rows (src/md/features/module_budget_request.md).
 TEST_PLAN_VALUES_RESOURCE_FILE :: foundation.BUILD_FOLDER + "/test_plan_values.resource"
 
 // Test module budget policy constants written into the test boot image's plan
 // file so root needs no hardcoded exception tables.
-TEST_LIMITS_PROCESSOR :: u64(1_500_000) // Reaches the processor-time limit quickly in the limits test.
-TEST_LIMITS_LOG_RECORDS :: u64(40)      // Burst of 100 reaches the per-second log limit.
-TEST_LOG_FLOOD_LOG_RECORDS :: u64(0)    // Kernel log refuses every line so the wired record output carries them.
+TEST_LIMITS_PROCESSOR :: u64(1_500_000)   // Reaches the processor-time limit quickly in the limits test.
+TEST_LIMITS_LOG_RECORDS :: u64(40)        // Burst of 100 reaches the per-second log limit.
+TEST_LOG_FLOOD_LOG_RECORDS :: u64(0)      // Kernel log refuses every line so the wired record output carries them.
+TEST_PDPE1GB_PROBE_PAGES :: u64(266_240)  // 1040 MiB: one 1 GiB object (262144 pages), 513-page frame list, 514 page tables, and headroom.
+TEST_BOOTSTRAP_PROBE_PAGES :: u64(24_576) // 96 MiB: Stage 0/1 assembly buffers, 32 MiB call hosts, and SQLite/Lua/zstd heaps.
 
 // test_plan_values_encode builds and validates the signed plan-values set
 // shipped in test boot images for test-only budget policy rows.
@@ -48,9 +50,29 @@ test_plan_values_encode :: proc(allocator := context.temp_allocator) -> (bytes: 
 		return nil, false
 	}
 
-	blocks := [2]plan_values.Owner_Block {
+	pdpe1gb_changes := [1]chosen_values.Change {
+		{name = root_plan_values.BUDGET_PAGES_FIELD, kind = .Choose, value = TEST_PDPE1GB_PROBE_PAGES},
+	}
+	pdpe1gb_buf: [chosen_values.HEADER_SIZE + chosen_values.ENTRY_SIZE]u8
+	pdpe1gb_len, pdpe1gb_problem := chosen_values.write_record({}, pdpe1gb_changes[:], pdpe1gb_buf[:])
+	if pdpe1gb_problem != .None {
+		return nil, false
+	}
+
+	bootstrap_changes := [1]chosen_values.Change {
+		{name = root_plan_values.BUDGET_PAGES_FIELD, kind = .Choose, value = TEST_BOOTSTRAP_PROBE_PAGES},
+	}
+	bootstrap_buf: [chosen_values.HEADER_SIZE + chosen_values.ENTRY_SIZE]u8
+	bootstrap_len, bootstrap_problem := chosen_values.write_record({}, bootstrap_changes[:], bootstrap_buf[:])
+	if bootstrap_problem != .None {
+		return nil, false
+	}
+
+	blocks := [4]plan_values.Owner_Block {
 		{owner = "limits", defaults = limits_buf[:limits_len], locks = empty_buf[:empty_len]},
 		{owner = "log_flood", defaults = log_flood_buf[:log_flood_len], locks = empty_buf[:empty_len]},
+		{owner = "pdpe1gb_probe", defaults = pdpe1gb_buf[:pdpe1gb_len], locks = empty_buf[:empty_len]},
+		{owner = "bootstrap_probe", defaults = bootstrap_buf[:bootstrap_len], locks = empty_buf[:empty_len]},
 	}
 	raw := make([]u8, plan_values.SET_SIZE, allocator)
 	written := plan_values.set_write(raw, 0, 1, blocks[:])

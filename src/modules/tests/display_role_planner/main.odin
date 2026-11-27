@@ -18,10 +18,6 @@ HOLDER_MODULE :: "panel_display"
 PLAN_NAME :: "panel display"
 POLL_MILLISECONDS :: 100
 
-// Measure pending: the 2048 pages of the least budget in which it ran
-// before its floor was counted.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}
-
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
 	system.log_fact(.Error, Wrong{value = value}, text)

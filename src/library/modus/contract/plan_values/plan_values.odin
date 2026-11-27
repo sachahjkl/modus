@@ -20,9 +20,13 @@ import "modus:contract/fixed_addresses"
 
 // Where an owner maps the page of its plan values.
 OWNER_PAGE_ADDRESS :: fixed_addresses.PLAN_VALUES_PAGE_ADDRESS
+// Name of the signed boot-image resource carrying default plan values for
+// shipped modules (such as post-ready budget policy rows). Shipped in both
+// test and release boot images (src/md/features/module_budget_request.md).
+DEFAULT_IMAGE_PLAN_RESOURCE :: "default_plan_values"
 // Name of the optional signed boot-image resource carrying test-only plan
-// values (such as budget rows for `limits` and `log_flood`). Present in test
-// boot images and excluded from release boot images
+// values (such as budget rows for `limits`, `log_flood`, and `pdpe1gb_probe`).
+// Present in test boot images and excluded from release boot images
 // (src/md/features/module_budget_request.md).
 TEST_IMAGE_PLAN_RESOURCE :: "test_plan_values"
 

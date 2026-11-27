@@ -195,8 +195,10 @@ release_image_has_no_test_module_and_no_test_start_grant_matches :: proc(t: ^tes
 	testing.expect(t, test_grant_rows > 0, "start_grant_sets contains test module rows that match nothing in release")
 }
 
-// The test-image plan file encodes valid budget rows for limits and log_flood,
-// and release_boot_image_of strips it so no release image carries test plan rows.
+// The test-image plan file encodes valid budget rows for limits, log_flood,
+// and pdpe1gb_probe; the default plan file encodes the eight shipped post-ready
+// budget rows; release_boot_image_of keeps default_plan_values and strips
+// test_plan_values so no release image carries test plan rows.
 @(test)
 test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	encoded, ok := test_plan_values_encode()
@@ -204,7 +206,7 @@ test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	head, check_problem := plan_values.set_check(encoded)
 	testing.expect_value(t, check_problem, plan_values.Set_Problem.None)
 	testing.expect_value(t, head.principal, u64(0))
-	testing.expect_value(t, head.owner_count, 2)
+	testing.expect_value(t, head.owner_count, 3)
 
 	limits_vals, limits_found := plan_values.owner_values_of(encoded, "limits")
 	testing.expect(t, limits_found, "limits owner missing from test plan")
@@ -220,13 +222,51 @@ test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	testing.expect(t, !flood_policy.has_processor)
 	testing.expect(t, flood_policy.has_log_records && flood_policy.log_records == TEST_LOG_FLOOD_LOG_RECORDS)
 
+	pdpe_vals, pdpe_found := plan_values.owner_values_of(encoded, "pdpe1gb_probe")
+	testing.expect(t, pdpe_found, "pdpe1gb_probe owner missing from test plan")
+	pdpe_policy, pdpe_conflict, pdpe_over := root_plan_values.module_budget_policy_of(pdpe_vals)
+	testing.expect(t, !pdpe_conflict && !pdpe_over, "pdpe1gb_probe policy reported conflict")
+	testing.expect(t, pdpe_policy.size_kind == .Pages && pdpe_policy.pages == TEST_PDPE1GB_PROBE_PAGES)
+
 	_, absent := plan_values.owner_values_of(encoded, "console")
 	testing.expect(t, !absent, "unrelated module unexpectedly present in test plan")
+
+	default_encoded, default_ok := default_plan_values_encode()
+	testing.expect(t, default_ok && len(default_encoded) > 0, "default plan values failed to encode")
+	default_head, default_problem := plan_values.set_check(default_encoded)
+	testing.expect_value(t, default_problem, plan_values.Set_Problem.None)
+	testing.expect_value(t, default_head.principal, u64(0))
+	testing.expect_value(t, default_head.owner_count, 8)
+
+	Expected_Default :: struct {
+		owner:       string,
+		size_kind:   root_plan_values.Budget_Size_Kind,
+		pages:       u64,
+		share_parts: u64,
+	}
+	expected_defaults := [?]Expected_Default {
+		{"browser", .Pages, DEFAULT_BROWSER_PAGES, 0},
+		{"clock", .Pages, DEFAULT_CLOCK_PAGES, 0},
+		{"debugger", .Pages, DEFAULT_DEBUGGER_PAGES, 0},
+		{"doom", .Pages, DEFAULT_DOOM_PAGES, 0},
+		{"guest_builder", .Pages, DEFAULT_GUEST_BUILDER_PAGES, 0},
+		{"linux", .Share_Parts, 0, DEFAULT_LINUX_SHARE_PARTS},
+		{"paint", .Pages, DEFAULT_PAINT_PAGES, 0},
+		{"recipes", .Share_Parts, 0, DEFAULT_RECIPES_SHARE_PARTS},
+	}
+	for item in expected_defaults {
+		vals, found := plan_values.owner_values_of(default_encoded, item.owner)
+		testing.expectf(t, found, "shipped owner %s missing from default plan", item.owner)
+		pol, conflict, over := root_plan_values.module_budget_policy_of(vals)
+		testing.expectf(t, !conflict && !over, "default policy for %s reported conflict", item.owner)
+		testing.expectf(t, pol.size_kind == item.size_kind && pol.pages == item.pages && pol.share_parts == item.share_parts, "default policy mismatch for %s", item.owner)
+	}
 
 	root_text, fonts_text: string = "root", "fonts"
 	files := []Image_File {
 		{name = ROOT_SERVICE_MODULE, file = transmute([]u8)root_text},
 		{name = "fonts", file = transmute([]u8)fonts_text},
+		{name = plan_values.DEFAULT_IMAGE_PLAN_RESOURCE, file = default_encoded},
 		{name = plan_values.TEST_IMAGE_PLAN_RESOURCE, file = encoded},
 	}
 	build_image := boot_image_encode(files, 1)
@@ -234,10 +274,11 @@ test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	release_image, problem := release_boot_image_of(build_image)
 	testing.expect_value(t, problem, "")
 	_, rel_resources, valid := info.image_tables(release_image)
-	testing.expect(t, valid && len(rel_resources) == 2)
-	if len(rel_resources) == 2 {
+	testing.expect(t, valid && len(rel_resources) == 3)
+	if len(rel_resources) == 3 {
 		testing.expect_value(t, system_description.name_of(&rel_resources[0].name), "fonts")
-		testing.expect_value(t, system_description.name_of(&rel_resources[1].name), image_tree.RESOURCE_NAME)
+		testing.expect_value(t, system_description.name_of(&rel_resources[1].name), plan_values.DEFAULT_IMAGE_PLAN_RESOURCE)
+		testing.expect_value(t, system_description.name_of(&rel_resources[2].name), image_tree.RESOURCE_NAME)
 	}
 	testing.expect_value(t, boot_image_verify_image_tree(release_image), "")
 	testing.expect_value(t, release_test_module_problem(release_image, "release"), "")

@@ -39,16 +39,19 @@ import "modus:system"
 GUEST_MEMORY_PAGES_MOST :: contract.MAX_GUEST_MEMORY_PAGES
 INPUT_DISK_BYTES_MOST :: contract.MAX_INPUT_DISK_BYTES
 OUTPUT_DISK_BYTES_MOST :: contract.MAX_OUTPUT_DISK_BYTES
-// The guest RAM and the disks of the default budget (below).
+// The guest RAM, disks and table/scratch pages of the default plan budget row
+// (256 MiB guest RAM, 16 MiB input disk, 64 MiB output disk, 8 MiB scratch).
 DEFAULT_GUEST_MEMORY_PAGES :: u64(65_536)
 DEFAULT_INPUT_DISK_PAGES :: u64(4_096)
 DEFAULT_OUTPUT_DISK_PAGES :: u64(16_384)
+DEFAULT_BUILD_BUDGET_PAGES :: DEFAULT_GUEST_MEMORY_PAGES + DEFAULT_INPUT_DISK_PAGES + DEFAULT_OUTPUT_DISK_PAGES + 2048
+#assert(DEFAULT_BUILD_BUDGET_PAGES == 88_064)
 
-// Default budget request for a standalone guest build (256 MiB guest RAM,
-// 16 MiB input disk, 64 MiB output disk, nested page tables and scratch);
-// a starter can grant a larger budget for multi-GiB builds.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 88064, processes = 2, threads = 1}
-#assert(88064 == DEFAULT_GUEST_MEMORY_PAGES + DEFAULT_INPUT_DISK_PAGES + DEFAULT_OUTPUT_DISK_PAGES + 2048)
+// The tool counts the module, its load, this process with its guest process,
+// and one thread. Guest memory and disks allocate per build from the caller's
+// or default plan's budget (92,160 pages by default, leaving >= 88,064 pages
+// after the floor); a starter can grant a larger budget for multi-GiB builds.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2, threads = 1}
 TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES
 
 

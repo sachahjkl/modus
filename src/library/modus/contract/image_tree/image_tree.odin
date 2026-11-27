@@ -229,6 +229,7 @@ RESERVED_BOOT_RECORDS := [?]string {
 	"start_list",
 	"rescue_list",
 	"replacement_list",
+	"default_plan_values",
 	"test_plan_values",
 	"measure_run",
 	RESOURCE_NAME,

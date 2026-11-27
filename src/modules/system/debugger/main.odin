@@ -85,16 +85,11 @@ import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The debug object of the module of a disk process, read from the store
-// into memory of this service of its size: 2048 pages hold an object of
-// 8 MiB, and a larger one, up to DEBUG_OBJECT_BYTES_LIMIT, takes the
-// pages that the budget of this service has, or is refused with a line of
-// the log. The input history of a record, HISTORY_PAGES, 128 pages, the
-// point copies and shared baselines that the kernel takes from its budget
-// (96 pages), and stand-in mappings for replaying a window surface at 1.25x
-// scale (2500 pages). The rest: the page tables of the mappings, and the call
-// ring and the call region of the connection that reads the debug object.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4800, processes = 1, threads = 1}
+// The tool counts the module, its load and its thread. Post-ready allocations
+// (disk debug objects up to 8 MiB, input histories, kernel point copies and
+// baselines, and replay stand-in surface mappings) draw from debugger's
+// default plan budget row (22 MiB).
+MODULE_BUDGET :: system.Stated_Budget{processes = 1, threads = 1}
 
 PROCESS_SLOTS_SEARCHED :: 256 // The process slots that an attach searches for the name.
 THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one process.

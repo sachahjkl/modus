@@ -50,11 +50,14 @@ GUEST_MEMORY_PAGES_LEAST :: u64(32_768) // 128 MiB.
 // The pages that this process keeps for itself: its buffers, and the
 // records that the kernel makes for the guest process.
 PROCESS_RESERVE_PAGES :: u64(1_920)
-// The budget that the process asks for: a guest of the least memory, its
-// nested page table and the reserve; this process and its guest process,
-// and one thread. A larger grant gives a larger guest.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 34_816, processes = 2, threads = 1}
-#assert(34_816 == GUEST_MEMORY_PAGES_LEAST + GUEST_MEMORY_PAGES_LEAST / 512 + 64 + PROCESS_RESERVE_PAGES)
+// The least free pages after ready that start a 128 MiB Linux guest: the guest
+// RAM, its nested page table and the reserve of this process.
+LEAST_GUEST_BUDGET_PAGES :: GUEST_MEMORY_PAGES_LEAST + GUEST_MEMORY_PAGES_LEAST / 512 + 64 + PROCESS_RESERVE_PAGES
+// The tool counts the module, its load, this process with its guest process,
+// and one thread. Guest memory allocates after ready from linux's default plan
+// budget row (one quarter of the machine's pages); a larger grant gives a
+// larger guest.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2, threads = 1}
 
 // guest_memory_pages_of gives the pages of guest memory that a budget with
 // free_pages left pays: the guest, one page of its nested page table for

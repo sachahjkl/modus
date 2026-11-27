@@ -21,15 +21,17 @@ import "modus:graphics"
 import "modus:storage"
 import "modus:system"
 
-// Plan value: 11280 working pages (~44 MiB) cover a 29 MiB Freedoom WAD in
-// memory, the 8 MiB Doom zone, C scratch bins, 16 sound region pages, and
-// headroom; window surface pages are added automatically from window_width/height.
+// The circular audio sample region shared with the sound service before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{SOUND_REGION_PAGES}
+
+// The tool counts the module, its load, its thread, its 640x400 window at the
+// largest scale, and the sound sample region. The WAD and Doom zone arena
+// allocate after ready from doom's default plan budget row.
 MODULE_BUDGET :: system.Stated_Budget{
-	working_memory_pages = 11280,
-	processes            = 1,
-	threads              = 1,
-	window_width         = WINDOW_WIDTH,
-	window_height        = WINDOW_HEIGHT,
+	processes     = 1,
+	threads       = 1,
+	window_width  = WINDOW_WIDTH,
+	window_height = WINDOW_HEIGHT,
 }
 
 // Plan value: 56 KiB chunk size for storage.read_range inside the 64 KiB call
@@ -455,6 +457,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	state.window = window
 	state.start_ns = system.nanoseconds()
 
+	state.store, state.store_open = storage.open(ctx)
+	sound_open(&state.sound, ctx)
+	// Wait for root to read the startup peak before reserving the WAD and Doom
+	// zone arena that draws from doom's plan budget beyond its floor.
+	system.ready_at_end()
+
 	amounts, budget_status := system.budget_read()
 	if budget_status != .Succeeded {
 		system.stop(.Failed)
@@ -466,14 +474,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 
-	state.store, state.store_open = storage.open(ctx)
 	wad_name, wad_bytes, wad_size, wad_found := wad_load_from_store(&state)
 	if !wad_found {
 		show_missing_wad_screen(&state)
 	}
 	state.wad_size = wad_size
-
-	sound_open(&state.sound, ctx)
 
 	host := Doom_Host {
 		alloc               = host_alloc,

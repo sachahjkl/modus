@@ -9,10 +9,8 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:system"
 
-// Budget covers one 1 GiB object (262144 pages), its frame list (513 pages),
-// page tables for mapping and demotion (514 pages), and working headroom.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 266240}
-
+// The tool counts the module, its load and its thread. The 1 GiB test object
+// allocates after ready from pdpe1gb_probe's row in test_plan_values.
 GIGABYTE_PAGES :: u64(262144)
 GIGABYTE_BYTES :: u64(1 << 30)
 SLICE_2M_WORDS :: u64((2 << 20) / size_of(u64))
@@ -78,6 +76,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if sys_before.free_runs_1g < 1 {
 		wrong("expected at least one free 1 GiB run on a 4 GiB pdpe1gb machine", sys_before.free_runs_1g, 1)
 	}
+
+	// Wait for root to read the startup peak before creating the 1 GiB test
+	// object paid by this test module's row in test_plan_values.
+	system.ready_at_end()
 
 	memory, create_status := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
 	if create_status != .Succeeded {

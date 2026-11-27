@@ -7,6 +7,7 @@ import contract "modus:contract/guest_builder"
 import "modus:contract/guest_os"
 import "modus:guest_regions"
 import op "modus:contract/operation"
+import "modus:system"
 
 // test_runner prepares a running build on an output disk of 4 KiB, with no
 // input disk.
@@ -23,11 +24,13 @@ test_runner :: proc(runner: ^contract.Guest_Sandbox_Runner, output: []u8, max_ex
 	assert(contract.runner_start(runner) == .None)
 }
 
-// The default budget pays the default guest memory and disks, while the
-// contract bounds allow multi-GiB guests when a starter grants a larger budget.
+// The default plan budget pays the default guest memory and disks while the
+// floor holds zero hand-written working memory, and contract bounds allow
+// multi-GiB guests when a starter grants a larger budget.
 @(test)
 budget_holds_the_guest_and_the_disks :: proc(t: ^testing.T) {
-	testing.expect(t, MODULE_BUDGET.working_memory_pages >= DEFAULT_GUEST_MEMORY_PAGES + DEFAULT_INPUT_DISK_PAGES + DEFAULT_OUTPUT_DISK_PAGES)
+	testing.expect_value(t, MODULE_BUDGET, system.Stated_Budget{processes = 2, threads = 1})
+	testing.expect(t, DEFAULT_BUILD_BUDGET_PAGES >= DEFAULT_GUEST_MEMORY_PAGES + DEFAULT_INPUT_DISK_PAGES + DEFAULT_OUTPUT_DISK_PAGES)
 	testing.expect(t, GUEST_MEMORY_PAGES_MOST >= 4_194_304)
 	testing.expect(t, INPUT_DISK_BYTES_MOST >= 1024 * 1024 * 1024)
 	testing.expect(t, OUTPUT_DISK_BYTES_MOST >= 1024 * 1024 * 1024)

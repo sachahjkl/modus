@@ -31,14 +31,12 @@ import "modus:contract/value_kinds"
 import "modus:storage"
 import "modus:system"
 
-// Plan value: 24576 pages (96 MiB) floor covers Stage 0/1 joined assembly
-// buffers (~16 MiB), one 32 MiB c_compiler/assemble call host or Stage 1
-// compile arena at a time, and module/heap buffers for SQLite, Lua, and zstd.
 // Needs 2 processes and 2 threads to spawn one isolated call host at a time.
+// Post-ready memory (Stage 0/1 assembly buffers, 32 MiB call hosts, and
+// SQLite/Lua/zstd heaps) is supplied by the test_plan_values budget row.
 MODULE_BUDGET :: system.Stated_Budget{
-	working_memory_pages = 24576,
-	processes            = 2,
-	threads              = 2,
+	processes = 2,
+	threads   = 2,
 }
 
 // Plan value: 56 KiB chunk size for storage.read_range inside the 64 KiB call
@@ -1086,6 +1084,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if compile_unit_export == 0 || assemble_program_export == 0 {
 		wrong("missing compile_unit or assemble_program export", u64(compile_unit_export), 1)
 	}
+
+	// Signal first state of work after mapping boot image and opening storage,
+	// before allocating large post-ready buffers and call hosts.
+	system.ready_at_end()
 
 	check_refusals()
 	run_chibicc_self_host()

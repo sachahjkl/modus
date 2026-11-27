@@ -407,6 +407,45 @@ module_budget_policy_of :: proc "contextless" (values: plan_values.Owner_Values)
 	return policy, size_conflict, reserve_over_ceiling
 }
 
+// module_budget_policy_merge layers a higher-precedence budget policy over a
+// lower-precedence base policy (for example principal 0's live plan over the
+// boot image's default plan). Any field set in override wins; unset fields
+// inherit from base. An inherited growth reserve is dropped if the merged
+// policy has no ceiling or a lower ceiling than the reserve.
+module_budget_policy_merge :: proc "contextless" (override, base: Module_Budget_Policy) -> (merged: Module_Budget_Policy) {
+	merged = base
+	if override.size_kind != .Default {
+		merged.size_kind = override.size_kind
+		merged.pages = override.pages
+		merged.share_parts = override.share_parts
+	}
+	if override.has_ceiling {
+		merged.ceiling_pages = override.ceiling_pages
+		merged.has_ceiling = true
+	}
+	if override.has_growth_reserve {
+		merged.growth_reserve_pages = override.growth_reserve_pages
+		merged.has_growth_reserve = true
+	}
+	if merged.has_growth_reserve && (!merged.has_ceiling || merged.growth_reserve_pages > merged.ceiling_pages) {
+		merged.growth_reserve_pages = 0
+		merged.has_growth_reserve = false
+	}
+	if override.has_processor {
+		merged.processor = override.processor
+		merged.has_processor = true
+	}
+	if override.has_log_records {
+		merged.log_records = override.log_records
+		merged.has_log_records = true
+	}
+	if override.has_screen_pages {
+		merged.screen_pages = override.screen_pages
+		merged.has_screen_pages = true
+	}
+	return merged
+}
+
 // planned_pages_of computes the planned starting page count of a budget
 // policy row against the pages of the machine at start. has_size is false for
 // Default and Unbounded rows: an unbounded row reserves floor and default

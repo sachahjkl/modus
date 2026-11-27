@@ -803,8 +803,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The boot image against the system description, before any process
 	// starts (trust.odin).
 	trust_check()
-	// Optional plan values shipped in a signed test boot image
-	// (plan_values.odin); absent in release boot images.
+	// Signed boot-image plan values (plan_values.odin): default shipped rows
+	// and optional test-only rows absent in release boot images.
 	plan_values_image_load()
 	// The largest budgets of this machine, from the pages of this service
 	// before any process holds a part of them.

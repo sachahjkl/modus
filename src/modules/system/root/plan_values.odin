@@ -45,9 +45,14 @@ plan_values_copy: [plan_values.SET_SIZE]u8
 plan_values_in_force: [plan_values.SET_SIZE]u8
 plan_values_generation: u64
 plan_values_given: bool
+// Signed default plan values carried by every boot image (release and test,
+// plan_values.DEFAULT_IMAGE_PLAN_RESOURCE): provides shipped default budget
+// policy rows beneath principal 0's live plan and optional test plan.
+plan_values_default_image: [plan_values.SET_SIZE]u8
+plan_values_default_image_loaded: bool
 // Optional plan values carried by a signed test boot image
-// (plan_values.TEST_IMAGE_PLAN_RESOURCE): acts as a base layer underneath
-// principal 0's live plan so test-only budget rows need no hardcoded tables.
+// (plan_values.TEST_IMAGE_PLAN_RESOURCE): acts as a test-only layer between
+// default_plan_values and principal 0's live plan, omitted from release images.
 plan_values_image: [plan_values.SET_SIZE]u8
 plan_values_image_loaded: bool
 
@@ -215,31 +220,40 @@ plan_values_pages_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -
 	return .Succeeded
 }
 
-// plan_values_image_load loads the optional signed boot-image plan resource
-// (plan_values.TEST_IMAGE_PLAN_RESOURCE) after trust_check. Release images
-// omit this resource, leaving plan_values_image_loaded false.
-plan_values_image_load :: proc "contextless" () {
-	entry := system.image_resource_find(image, plan_values.TEST_IMAGE_PLAN_RESOURCE)
+// plan_values_resource_load validates and copies one optional boot-image plan
+// resource into target after trust_check.
+@(private = "file")
+plan_values_resource_load :: proc "contextless" (resource_name: string, target: ^[plan_values.SET_SIZE]u8) -> bool {
+	entry := system.image_resource_find(image, resource_name)
 	if entry == nil || !image_entry_give(entry) {
-		return
+		return false
 	}
 	if entry.size > plan_values.SET_SIZE {
 		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[.Too_Large], 24)})
-		return
+		return false
 	}
 	bytes := image[entry.offset:][:entry.size]
 	if _, problem := plan_values.set_check(bytes); problem != .None {
 		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[problem], 24)})
-		return
+		return false
 	}
-	plan_values_image = {}
-	intrinsics.mem_copy_non_overlapping(&plan_values_image, raw_data(bytes), int(entry.size))
-	plan_values_image_loaded = true
+	target^ = {}
+	intrinsics.mem_copy_non_overlapping(target, raw_data(bytes), int(entry.size))
+	return true
+}
+
+// plan_values_image_load loads the signed boot-image plan resources after
+// trust_check: the shipped default plan (DEFAULT_IMAGE_PLAN_RESOURCE) and
+// the optional test-only plan (TEST_IMAGE_PLAN_RESOURCE, absent in releases).
+plan_values_image_load :: proc "contextless" () {
+	plan_values_default_image_loaded = plan_values_resource_load(plan_values.DEFAULT_IMAGE_PLAN_RESOURCE, &plan_values_default_image)
+	plan_values_image_loaded = plan_values_resource_load(plan_values.TEST_IMAGE_PLAN_RESOURCE, &plan_values_image)
 }
 
 // plan_values_of gives the values of an owner in the set in force: the
 // owner is named by its store (role_policy.store_name_of_module). Principal
-// 0's live plan takes precedence over the optional boot-image test plan.
+// 0's live plan takes precedence over the optional test-image plan, which
+// takes precedence over the shipped default boot-image plan.
 plan_values_of :: proc "contextless" (owner: string) -> (values: plan_values.Owner_Values, found: bool) {
 	if plan_values_given {
 		if values, found = plan_values.owner_values_of(plan_values_in_force[:], owner); found {
@@ -247,7 +261,12 @@ plan_values_of :: proc "contextless" (owner: string) -> (values: plan_values.Own
 		}
 	}
 	if plan_values_image_loaded {
-		return plan_values.owner_values_of(plan_values_image[:], owner)
+		if values, found = plan_values.owner_values_of(plan_values_image[:], owner); found {
+			return values, true
+		}
+	}
+	if plan_values_default_image_loaded {
+		return plan_values.owner_values_of(plan_values_default_image[:], owner)
 	}
 	return {}, false
 }
@@ -281,19 +300,54 @@ root_plan_read :: proc "contextless" () {
 	system.log_fact(.Info, Root_Plan_Values_Read{budget_share = plan.budget_share, start_width = u64(plan.memory_screen_start_width), start_height = u64(plan.memory_screen_start_height), most_width = u64(plan.memory_screen_most_width), most_height = u64(plan.memory_screen_most_height), sizes_refused = sizes_refused ? 1 : 0})
 }
 
-// module_budget_policy_for gives the plan budget policy row of a module of
-// the boot image, keyed by its role name (if it holds a role) or its module
-// name. Returns zero policy when the plan gives no row.
-module_budget_policy_for :: proc "contextless" (name: string) -> (policy: root_plan_values.Module_Budget_Policy, size_conflict: bool, reserve_over_ceiling: bool) {
-	owner := role_policy.store_name_of_module(&role_holder_names, name)
-	values, found := plan_values_of(owner)
+// module_budget_policy_in_set reads the budget policy row of a module in one
+// plan-values set, keyed by its role name (if it holds a role) or its module name.
+@(private = "file")
+module_budget_policy_in_set :: proc "contextless" (set: []u8, owner, name: string) -> (policy: root_plan_values.Module_Budget_Policy, size_conflict: bool, reserve_over_ceiling: bool, found: bool) {
+	values: plan_values.Owner_Values
+	values, found = plan_values.owner_values_of(set, owner)
 	if !found && owner != name {
-		values, found = plan_values_of(name)
+		values, found = plan_values.owner_values_of(set, name)
 	}
 	if !found {
-		return {}, false, false
+		return {}, false, false, false
 	}
-	return root_plan_values.module_budget_policy_of(values)
+	policy, size_conflict, reserve_over_ceiling = root_plan_values.module_budget_policy_of(values)
+	return policy, size_conflict, reserve_over_ceiling, true
+}
+
+// module_budget_policy_for gives the effective plan budget policy row of a
+// module of the boot image by layering principal 0's live plan over the
+// optional test-image plan over the shipped default boot-image plan. Setting
+// a non-budget field (such as browser.home) in a live plan preserves unset
+// budget policy fields from lower layers.
+module_budget_policy_for :: proc "contextless" (name: string) -> (policy: root_plan_values.Module_Budget_Policy, size_conflict: bool, reserve_over_ceiling: bool) {
+	owner := role_policy.store_name_of_module(&role_holder_names, name)
+	if plan_values_default_image_loaded {
+		base, c, o, found := module_budget_policy_in_set(plan_values_default_image[:], owner, name)
+		if found {
+			policy = base
+			size_conflict ||= c
+			reserve_over_ceiling ||= o
+		}
+	}
+	if plan_values_image_loaded {
+		layer, c, o, found := module_budget_policy_in_set(plan_values_image[:], owner, name)
+		if found {
+			policy = root_plan_values.module_budget_policy_merge(layer, policy)
+			size_conflict ||= c
+			reserve_over_ceiling ||= o
+		}
+	}
+	if plan_values_given {
+		layer, c, o, found := module_budget_policy_in_set(plan_values_in_force[:], owner, name)
+		if found {
+			policy = root_plan_values.module_budget_policy_merge(layer, policy)
+			size_conflict ||= c
+			reserve_over_ceiling ||= o
+		}
+	}
+	return policy, size_conflict, reserve_over_ceiling
 }
 
 // plan_values_owner_pages_create creates the pages of the owners. A

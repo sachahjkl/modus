@@ -23,9 +23,10 @@ import "modus:graphics"
 import "modus:screen_presence"
 import "modus:system"
 
-// Working pages for framebuffer and client surface page tables plus wait room;
-// no software backbuffer is allocated because pixels blit directly to screen.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048, processes = 1, threads = 1}
+// The tool counts the module, its load and its thread; no software backbuffer
+// is allocated because pixels blit directly to screen, and client surfaces are
+// paid by each client's budget.
+MODULE_BUDGET :: system.Stated_Budget{processes = 1, threads = 1}
 
 // Context slots passed by root display_holder_start.
 GRANT_FRAMEBUFFER :: 0

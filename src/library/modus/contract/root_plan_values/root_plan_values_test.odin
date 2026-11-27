@@ -276,3 +276,55 @@ unbounded_row_and_safety_ceiling_edges :: proc(t: ^testing.T) {
 	c_zceil, r_zceil, cap_zceil := effective_growth_of(zero_ceil_policy, 50_000, true)
 	testing.expect(t, c_zceil == 0 && r_zceil == 0 && !cap_zceil)
 }
+
+// Merging budget policy layers keeps base fields whenever a higher-precedence
+// layer omits them (such as a live plan that only changes a non-budget setting
+// of the same owner), overrides explicitly set fields, and drops an inherited
+// growth reserve if a lower override ceiling falls below it.
+@(test)
+module_budget_policy_merge_precedence_and_edges :: proc(t: ^testing.T) {
+	base := Module_Budget_Policy {
+		size_kind            = .Pages,
+		pages                = 16_384,
+		ceiling_pages        = 32_768,
+		has_ceiling          = true,
+		growth_reserve_pages = 8_192,
+		has_growth_reserve   = true,
+		processor            = 2_000_000,
+		has_processor        = true,
+		log_records          = 40,
+		has_log_records      = true,
+		screen_pages         = 2_048,
+		has_screen_pages     = true,
+	}
+
+	// Empty override preserves every base field.
+	testing.expect_value(t, module_budget_policy_merge({}, base), base)
+	// Empty base returns override unchanged.
+	testing.expect_value(t, module_budget_policy_merge(base, {}), base)
+
+	// Override with unbounded size and 0 log records replaces size and log
+	// records while inheriting processor and screen pages.
+	unb_override := Module_Budget_Policy {
+		size_kind       = .Unbounded,
+		log_records     = 0,
+		has_log_records = true,
+	}
+	merged_unb := module_budget_policy_merge(unb_override, base)
+	testing.expect(t, merged_unb.size_kind == .Unbounded && merged_unb.pages == 0 && merged_unb.share_parts == 0)
+	testing.expect(t, merged_unb.has_log_records && merged_unb.log_records == 0)
+	testing.expect(t, merged_unb.has_processor && merged_unb.processor == 2_000_000)
+	testing.expect(t, merged_unb.has_screen_pages && merged_unb.screen_pages == 2_048)
+	testing.expect(t, merged_unb.has_ceiling && merged_unb.ceiling_pages == 32_768)
+	testing.expect(t, merged_unb.has_growth_reserve && merged_unb.growth_reserve_pages == 8_192)
+
+	// Override lowering ceiling below base's growth reserve drops the reserve.
+	low_ceil := Module_Budget_Policy {
+		ceiling_pages = 4_096,
+		has_ceiling   = true,
+	}
+	merged_low := module_budget_policy_merge(low_ceil, base)
+	testing.expect(t, merged_low.has_ceiling && merged_low.ceiling_pages == 4_096)
+	testing.expect(t, !merged_low.has_growth_reserve && merged_low.growth_reserve_pages == 0)
+	testing.expect(t, merged_low.size_kind == .Pages && merged_low.pages == 16_384)
+}

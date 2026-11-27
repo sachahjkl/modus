@@ -43,7 +43,6 @@ import "modus:contract/accessibility"
 import "modus:contract/draw_record"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import "modus:contract/reference_screen"
 import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
 import "modus:display"
@@ -62,60 +61,16 @@ LEAST_WIDTH :: 600
 LEAST_HEIGHT :: 360
 LARGEST_WIDTH :: 1920
 LARGEST_HEIGHT :: 1080
-// The budget of paint. The tool counts the module pages (the code, the data
-// and the tables below), the stacks of the three threads and the two pictures
-// of the window at its largest size; the source states the working memory.
-//
-// The window: 1920 x 1080 logical pixels at the largest scale, cut on each
-// axis to the reference screen as the tool counts it
-// (src/md/features/desktop_to_browser.md, "The budgets"): 1920 x 1080
-// pixels, 4 bytes each, two pictures: 4050 pages. During a resize after
-// ready the second surface draws from the growth factor of the budget. The
-// working memory holds 256 pages for tables and mappings, the glyph memory
-// of the drawing module (354 pages, display.TEXT_MEMORY_PAGES), and 48 pages
-// for each of the two worker threads past the default stack: 706 pages.
-//
-// The picture: its pixels, its copy before a stroke, the stack of a fill
-// and the history are arenas that the budget pays, sized to the picture
-// (src/md/features/paint_application.md, "The memory of a picture";
-// src/md/features/paint_application.md, "The memory of the history"). The
-// floor states a 1280 x 720 picture: three arenas of 900 pages (the picture,
-// its copy, and the history at its bound of one copy), the stack of a fill
-// of 128 pages, and the frame lists of the four reservations, at most 64
-// pages (measured peak at ready 2396 pages). Larger pictures and a second
-// resize surface draw from the growth factor of the budget or a plan row; a
-// picture past the budget is refused, and paint says so.
-// 706 + 3 * 900 + 128 + 64 = 3598. The tool reads the literal; a check below
-// ties it to these parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3598, threads = 3, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+// The tool counts the module, its imports, its load, its three threads and the
+// two pictures of the resizable window at the largest scale (measured peak at
+// ready 2396 pages). Post-ready picture, copy, history and fill arenas, the
+// glyph memory and a second resize surface draw from paint's default plan
+// budget row (64 MiB); a picture past the budget is refused, and paint says so.
+MODULE_BUDGET :: system.Stated_Budget{threads = 3, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
-PAGE_BYTES :: 4096
-// The rule of the tool (scale_factor.window_surface_largest), from the same
-// constants: a constant cannot call the procedure. The cut holds because
-// the window is resizable with a least size within the logical screen at
-// the largest scale: the budget states that least size, and the tool checks
-// it against the call of resizable_set.
+// The least size fits inside the logical screen at the largest scale, so the
+// tool cuts the window surface to the reference screen.
 #assert(LEAST_WIDTH > 0 && LEAST_HEIGHT > 0 && LEAST_WIDTH <= scale_factor.LARGEST_LOGICAL_WIDTH && LEAST_HEIGHT <= scale_factor.LARGEST_LOGICAL_HEIGHT)
-WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
-WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
-WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-// The picture that the floor states, and its arenas.
-STATED_PICTURE_WIDTH :: 1280
-STATED_PICTURE_HEIGHT :: 720
-STATED_PICTURE_PAGES :: (STATED_PICTURE_WIDTH * STATED_PICTURE_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-// The stack of spans of a fill: 128 pages, 32 768 spans of 16 bytes. A
-// fill of a uniform sky holds 5 spans at most; a dense maze takes the
-// pages of the budget that the history does not use, or it is refused, and
-// the picture stays.
-STATED_FILL_PAGES :: 128
-// The frame list of a reservation costs 8 bytes for each page of it: four
-// reservations of the whole budget, rounded up.
-FRAME_LIST_PAGES :: 64
-// The stack of a worker thread past the 16 pages that the tool counts.
-WORKER_STACK_PAGES :: 48
-#assert(FRAME_LIST_PAGES >= 4 * ((MODULE_BUDGET.working_memory_pages + 512) * 8 / PAGE_BYTES + 1) + 8)
-#assert(MODULE_BUDGET.working_memory_pages == 256 + display.TEXT_MEMORY_PAGES + 2 * WORKER_STACK_PAGES + 3 * STATED_PICTURE_PAGES + STATED_FILL_PAGES + FRAME_LIST_PAGES)
-#assert(2 * (WINDOW_PAGES + MODULE_BUDGET.working_memory_pages) >= 2 * WINDOW_PAGES + 3 * STATED_PICTURE_PAGES + STATED_FILL_PAGES + FRAME_LIST_PAGES)
 
 GAP :: 4
 ROW_HEIGHT :: 28 // The row of the tools.

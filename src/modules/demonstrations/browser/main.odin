@@ -56,31 +56,11 @@ LARGEST_HEIGHT :: 900
 #assert(LEAST_WIDTH <= WIDTH && WIDTH <= LARGEST_WIDTH)
 #assert(LEAST_HEIGHT <= HEIGHT && HEIGHT <= LARGEST_HEIGHT)
 
-// The window is counted at its largest size: 1280 x 900 pixels, 4 bytes
-// each, two pictures, 9 216 000 bytes, 2250 pages. A resize holds the old
-// surface and the new one together until the compositor shows the new one,
-// so the working memory holds a second surface at the largest size: 2250
-// pages. And the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 2250 + 354 = 2604. The document, its style
-// sheet, its boxes, its records and the tables of the window are arenas of
-// the budget that grow with the page (document.odin): the budget states a
-// page of the web of today, 1 MiB of HTML with 20 000 nodes, 40 000
-// attributes and 1 000 rules. Its parts need about 17 MB: records 5.8 MB
-// (6 of 48 bytes for each box), boxes 3.2 MB (160 bytes), styles 1.9 MB
-// (96 bytes), rules 1.8 MB (1784 bytes), text and the text of the records
-// 2.1 MB, nodes and attributes 1.4 MB. A growth asks twice its need, and
-// its need alone when the budget does not pay twice: 8192 pages hold the
-// page, its growth and the frame lists of the 13 reservations. A larger
-// page takes the pages that the budget holds, and past them it is cut.
-// The keeper of the settings (settings.odin) runs a worker thread: its
-// stack past the 16 pages that the tool counts for a thread, 48 pages.
-// 2604 + 8192 + 48 = 10844 (DOCUMENT_PAGES: the document).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10844, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
-// The second surface, the glyph memory, the document and the stack of the
-// keeper of the settings.
-#assert(MODULE_BUDGET.working_memory_pages == 2250 + 354 + DOCUMENT_PAGES + 48)
-DOCUMENT_PAGES :: 8192
+// The tool counts the module, its imports, its load, its two threads and its
+// resizable window at the largest scale. Post-ready document arenas, the glyph
+// memory and a second resize surface draw from browser's default plan budget
+// row (64 MiB); a larger page takes what the budget holds and is cut past it.
+MODULE_BUDGET :: system.Stated_Budget{processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 LINE :: graphics.LINE_HEIGHT
 ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.
