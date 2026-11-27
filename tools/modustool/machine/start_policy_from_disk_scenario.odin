@@ -156,6 +156,8 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// The default start policy is measured too.
 	machine_wait(&machine, fmt.aprintf(" of the list start_list%s", MEASURED_WORDS), any_order = true)
 	machine_wait(&machine, fmt.aprintf("display: console%s", WINDOW_TAKEN), any_order = true)
+	// Wait for the start-list unlock scan to finish and stop before machine_seal().
+	machine_wait(&machine, fmt.aprintf("root: unlock stopped: itself, done"), any_order = true)
 	machine_type(&machine, fmt.aprintf("start_policy_choose(\"%s\", \"%s\")", CHOSEN_NICKNAME, string(chosen_digits[:])))
 	machine_wait(&machine, fmt.aprintf("root: refused a choice of a start policy: the machine has no machine key, so the disk grant table of principal 0 lasts until the machine stops, and no choice reaches the next start; machine_seal() makes a machine key"))
 	machine_type(&machine, fmt.aprintf("machine_seal()"))

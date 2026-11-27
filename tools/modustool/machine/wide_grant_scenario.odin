@@ -54,6 +54,7 @@ TEST_WIDE_GRANT_LOCK_DISK :: foundation.BUILD_FOLDER + "/test_wide_grant_lock_di
 
 scenario_wide_grant := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 	// The machine passphrase, which proves a grant of principal 0.
 	{kind = .Type, text = "machine_passphrase()"},
 	{kind = .Wait, text = "root: the machine passphrase is set in the window of unlock"},
