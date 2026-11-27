@@ -6,6 +6,16 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.113.0] - 2026-11-27 04:44
+
+### Added
+
+- **A machine case of a start refused as busy during the read of the script fonts.** The local QUIC object cache holds a named object open until the `Release_Cache_Hold` step releases it. The `script_fonts` machine test proves that `start_from_disk` is refused as busy during the fetch and succeeds after the set maps and caches.
+
+### Fixed
+
+- **Web Desktop pointer alignment and window edge resize.** The Web Desktop now maps browser pointer coordinates directly onto the logical desktop size at every scale, and keeps pointer capture and held drags intact across viewport resizes and canvas edges. Dragging or keyboard-resizing a maximized window now clears its maximized state once the size changes.
+
 ## [0.112.0] - 2026-11-27 03:50
 
 ### Added
@@ -2126,6 +2136,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.113.0]: https://github.com/sachahjkl/modus/releases/tag/v0.113.0
 [0.112.0]: https://github.com/sachahjkl/modus/releases/tag/v0.112.0
 [0.111.0]: https://github.com/sachahjkl/modus/releases/tag/v0.111.0
 [0.110.0]: https://github.com/sachahjkl/modus/releases/tag/v0.110.0
