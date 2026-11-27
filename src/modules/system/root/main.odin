@@ -436,6 +436,17 @@ Connection :: struct {
 	client:                 Client_Grant,
 	role_generation:        u64, // Supervision generation of service role at Connect time.
 	storage_blocks_charged: u64, // Blocks reserved in session_block_ledgers for this storage connection.
+	serial:                 u32, // Monotonic non-zero serial echoed on Disconnect and Client_Closed.
+}
+
+connection_serial: u32
+
+connection_serial_next :: proc "contextless" () -> u32 {
+	connection_serial += 1
+	if connection_serial == 0 {
+		connection_serial = 1
+	}
+	return connection_serial
 }
 
 // The blocks of the store of a line history. The file of a history has 8
@@ -1896,7 +1907,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 			// is a right over the store; the principal and the flag to act for
 			// it stay.
 			kept := grant_for(item, connection.service) &~ (isolated.CALLER_AMOUNT_MASK | isolated.CALLER_ERASES_VERSIONS)
-			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), tag = connection.serial, values = {0 = u64(connection.ring), 6 = kept}}) {
 				count += 1
 			}
 		}
@@ -1928,7 +1939,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 			if connection.caller != item {
 				continue
 			}
-			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = connection_grant(&connection)}}) {
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), tag = connection.serial, values = {0 = u64(connection.ring), 6 = connection_grant(&connection)}}) {
 				count += 1
 			}
 		}
@@ -1950,7 +1961,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 			if !revoked_connection(&connection, item, .History) {
 				continue
 			}
-			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), tag = connection.serial, values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
 				count += 1
 			}
 		}
@@ -2447,6 +2458,9 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	}
 	count := 0
 	used := 0
+	if is_role_holder(system.name_of(service.name[:]), .Storage) {
+		storage_completions_drain(service)
+	}
 	used_for_client_rows := 0
 	for &connection in connections {
 		if connection.caller == nil {
@@ -2574,7 +2588,8 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 			grant = (grant & ~isolated.CALLER_AMOUNT_MASK) | granted_blocks
 		}
 	}
-	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
+	serial := connection_serial_next()
+	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), tag = serial, values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
 		session_storage_blocks_release(caller.principal, charged_blocks)
 		system.close(ring_memory)
 		system.close(region_memory)
@@ -2583,7 +2598,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	if len(tree_grants) > 0 {
 		for tree_path in tree_grants {
 			if packed, pack_ok := isolated.tree_grant_pack(tree_path); pack_ok {
-				_ = system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Tree_Grant), values = {0 = u64(in_service_ring), 1 = packed[0], 2 = packed[1], 3 = packed[2], 4 = packed[3], 5 = packed[4], 6 = packed[5]}})
+				_ = system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Tree_Grant), tag = serial, values = {0 = u64(in_service_ring), 1 = packed[0], 2 = packed[1], 3 = packed[2], 4 = packed[3], 5 = packed[4], 6 = packed[5]}})
 			}
 		}
 	}
@@ -2600,6 +2615,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		history                = history,
 		client                 = client,
 		storage_blocks_charged = charged_blocks,
+		serial                 = serial,
 	}
 	return free, service, ring_memory, region_memory, .Succeeded
 }
@@ -2660,6 +2676,40 @@ grant_room_short :: proc "contextless" (item: ^Started, which: Revoked_Connectio
 	return nil
 }
 
+// connection_closed_by_service reclaims root's Connection record when the
+// service already unmapped and closed the connection after a client CALL_CLOSE.
+connection_closed_by_service :: proc "contextless" (service: ^Started, ring_handle, region_handle: system.Handle, serial: u32) {
+	if service == nil || ring_handle == 0 || region_handle == 0 || serial == 0 {
+		return
+	}
+	for &connection in connections {
+		if connection.caller == nil || connection.service != service || connection.ring != ring_handle || connection.region != region_handle || connection.serial != serial {
+			continue
+		}
+		if !connection.history {
+			for &other in started {
+				if other.process != 0 && other.debugger == connection.service && other.debug_for == connection.caller && other.debug_for_row == connection.client.place {
+					debug_end(&other)
+				}
+			}
+		}
+		system.log_fact(.Info, Disconnected{caller = module_name_field(system.name_of(connection.caller.name[:])), service = module_name_field(system.name_of(connection.service.name[:]))})
+		if disk_load.connection == &connection {
+			disk_load.connection = nil
+		}
+		persisted_table_connection_ended(&connection)
+		picker_listing_connection_ended(&connection)
+		if debug_store.connection == &connection {
+			debug_store = {}
+		}
+		if connection.storage_blocks_charged != 0 && connection.caller != nil {
+			session_storage_blocks_release(connection.caller.principal, connection.storage_blocks_charged)
+		}
+		connection = {}
+		return
+	}
+}
+
 // disconnect ends a connection: the service unmaps the call ring and the
 // call region. The service ring has room for the record (see connect); a
 // service that gives a false count of records read keeps its own mappings.
@@ -2675,7 +2725,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 		}
 	}
 	if connection.service.process != 0 {
-		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
+		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), tag = connection.serial, values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
 	}
 	system.log_fact(.Info, Disconnected{caller = module_name_field(system.name_of(connection.caller.name[:])), service = module_name_field(system.name_of(connection.service.name[:]))})
 	// The connection of the service disk_processes for a load from the
@@ -2684,6 +2734,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 		disk_load.connection = nil
 	}
 	persisted_table_connection_ended(connection)
+	picker_listing_connection_ended(connection)
 	if debug_store.connection == connection {
 		debug_store = {}
 	}

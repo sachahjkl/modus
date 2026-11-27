@@ -43,6 +43,7 @@
 // [private store](term:private-store).
 package storage
 
+import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
@@ -126,23 +127,32 @@ open_of_handles :: proc "contextless" (ring_memory, region_memory, service: syst
 		return {}, false
 	}
 	// The root service made this connection: no call before the storage
-	// service maps its ring (src/md/api/call_ring_ready.md).
-	if system.connection_ready_wait(&client.calls, client.service) != .Ready {
-		system.ring_close(&client.calls)
-		system.memory_unmap(raw_data(client.region))
-		return {}, false
+	// service maps its ring (src/md/api/call_ring_ready.md). Skip the wait
+	// when a prior open in this process already consumed the one-time ready
+	// record and called storage.detach.
+	if intrinsics.atomic_load_explicit(&client.calls.completions.counters.read, .Acquire) == 0 {
+		if system.connection_ready_wait(&client.calls, client.service) != .Ready {
+			system.ring_close(&client.calls)
+			system.memory_unmap(raw_data(client.region))
+			return {}, false
+		}
 	}
 	return client, true
 }
 
-// close unmaps the call ring and call region of client and closes its local
-// connection handles. Any Mapped_Object handles returned earlier by map_object
-// stay mapped and valid until mapped_object_close is called on them.
+// close sends a voluntary disconnect record to storage, unmaps the call ring
+// and call region of client, and closes its local connection handles so both
+// storage and root reclaim the connection slot immediately. Any Mapped_Object
+// handles returned earlier by map_object stay mapped and valid until
+// mapped_object_close is called on them.
 close :: proc "contextless" (client: ^Client) {
 	if client == nil {
 		return
 	}
 	if client.calls.head != nil {
+		if !client.gone {
+			_ = system.send(&client.calls.commands, ring.Record{kind = isolated.CALL_CLOSE})
+		}
 		system.ring_close(&client.calls)
 	}
 	if raw_data(client.region) != nil {
@@ -156,6 +166,22 @@ close :: proc "contextless" (client: ^Client) {
 	}
 	if client.service != 0 {
 		system.close(client.service)
+	}
+	client^ = {}
+}
+
+// detach unmaps client's temporary call ring and call region views without
+// closing the underlying context handles or disconnecting storage, so a caller
+// that also owns a private store can call storage.open(ctx) later.
+detach :: proc "contextless" (client: ^Client) {
+	if client == nil {
+		return
+	}
+	if client.calls.head != nil {
+		system.ring_close(&client.calls)
+	}
+	if raw_data(client.region) != nil {
+		system.memory_unmap(raw_data(client.region))
 	}
 	client^ = {}
 }

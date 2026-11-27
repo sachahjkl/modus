@@ -59,6 +59,23 @@ map_object :: proc "contextless" (
 	return
 }
 
+// map_object_at maps the read-only object at exact '/' path at the caller's
+// chosen fixed virtual address (0 lets the kernel choose).
+map_object_at :: proc "contextless" (
+	client: ^Client,
+	path: string,
+	fixed_address: u64,
+	error: ^errors.Error_Record = nil,
+) -> (
+	mapped: Mapped_Object,
+	answer: storage_object.Map_Object_Answer,
+	status: storage_status.Status,
+	outcome: call_outcome.Call_Outcome,
+) {
+	mapped, answer, _, status, outcome = map_object_with_matches(client, path, false, {}, nil, nil, error, fixed_address)
+	return
+}
+
 // map_object_pinned maps the read-only object at exact '/' path only when its
 // intact content hash equals expected_hash. On mismatch, returns Failed with
 // outcome Another_Change_Came_First and answer.result == .Hash_Mismatch.
@@ -97,6 +114,7 @@ map_object_with_matches :: proc "contextless" (
 	ambiguity_buf: []u8,
 	matches_out: []storage_object.Ambiguity_Entry,
 	error: ^errors.Error_Record = nil,
+	fixed_address: u64 = 0,
 ) -> (
 	mapped: Mapped_Object,
 	answer: storage_object.Map_Object_Answer,
@@ -171,7 +189,7 @@ map_object_with_matches :: proc "contextless" (
 		system.close(handle)
 		return {}, answer, 0, .Refused, .Answer_Unreadable
 	}
-	addr, map_status := system.memory_map(handle, {})
+	addr, map_status := system.memory_map(handle, {}, address = fixed_address)
 	if map_status != .Succeeded || addr == nil {
 		system.close(handle)
 		return {}, answer, 0, .Refused, map_status

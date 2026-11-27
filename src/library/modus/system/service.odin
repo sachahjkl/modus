@@ -41,6 +41,7 @@ Connection :: struct {
 	region:        []u8, // The call region, mapped in this process.
 	caller:        Name, // The name of the caller, as the root service names it.
 	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_ERASES_VERSIONS, isolated.CALLER_READS_ONLY, isolated.CALLER_ACTS_FOR_PRINCIPAL).
+	serial:        u32, // Monotonic connection serial assigned by root on Connect to prevent handle-reuse aliasing.
 }
 
 // The connection of the call that runs: see service_caller.
@@ -80,13 +81,19 @@ Service :: struct {
 	// tree_grant, when set, attaches one read-only image-tree subtree grant
 	// from the root service to a connection (Storage only).
 	tree_grant: proc "contextless" (service: ^Service, ring_memory: Handle, values: ^[7]u64),
+	// Computed: at most SERVICE_CONNECTION_CAPACITY connections can close via
+	// CALL_CLOSE before root drains Client_Closed notifications from
+	// names.completions. Queued here so Client_Closed is never dropped and one
+	// slot stays reserved for tagged replies such as Principal_Reclaim.
+	pending_closes:      [isolated.SERVICE_CONNECTION_CAPACITY]ring.Record,
+	pending_close_count: int,
 }
 
 // The service ring and the call ring of each caller, two words each, take
 // at most half of the largest wait of the kernel: the other half is for the
 // other words of the service. Past the 64 words on the stack of a thread
 // (op.WORD_WAIT_INLINE), a wait needs a wait set of its own.
-#assert(2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) <= op.WORD_WAIT_MOST / 2)
+#assert(2 * (2 + isolated.SERVICE_CONNECTION_CAPACITY) <= op.WORD_WAIT_MOST / 2)
 
 // service_open opens the service ring of this process (`GRANT_SERVICE`) and
 // the file of its exports (`GRANT_VALUE_FILE_ADDRESS`). ok is false, and the
@@ -121,6 +128,9 @@ service_wait :: proc "contextless" (wait: ^Wait, service: ^Service) {
 	// Each later call does nothing.
 	ready()
 	wait_records(wait, &service.names.commands)
+	if service.pending_close_count > 0 {
+		wait_room_for(wait, &service.names.completions, 2)
+	}
 	for &connection in service.connections {
 		if connection.calls.head != nil {
 			wait_records(wait, &connection.calls.commands)
@@ -136,6 +146,30 @@ service_command_of_record :: proc "contextless" (command: ring.Record) -> (servi
 	return read, read != .None
 }
 
+// service_pending_closes_flush pushes queued Client_Closed records onto
+// service.names.completions while leaving at least one free slot for tagged
+// control replies such as Principal_Reclaim.
+service_pending_closes_flush :: proc "contextless" (service: ^Service) {
+	if service == nil || service.names.head == nil {
+		return
+	}
+	for service.pending_close_count > 0 {
+		cap := ring.capacity(&service.names.completions)
+		used := ring.count(&service.names.completions)
+		if cap <= used || cap - used < 2 {
+			break
+		}
+		if !send(&service.names.completions, service.pending_closes[0]) {
+			break
+		}
+		for i := 1; i < service.pending_close_count; i += 1 {
+			service.pending_closes[i - 1] = service.pending_closes[i]
+		}
+		service.pending_close_count -= 1
+		service.pending_closes[service.pending_close_count] = {}
+	}
+}
+
 // service_control_run processes pending commands on the root service ring
 // (Connect, Grant, Principal_Keys, Principal_Reclaim, Disconnect). A service
 // that dispatches client calls itself (such as storage group commit) calls
@@ -144,6 +178,7 @@ service_control_run :: proc "contextless" (service: ^Service) {
 	if service.names.head == nil {
 		return
 	}
+	service_pending_closes_flush(service)
 	for _ in 0 ..< ring.CAPACITY {
 		// The ring of the root service can carry the storage key of a
 		// principal: each record is erased in the ring as it is taken, and
@@ -165,13 +200,13 @@ service_control_run :: proc "contextless" (service: ^Service) {
 		case .None:
 			// service_command_of_record refuses None.
 		case .Connect:
-			if !connection_add(service, ring_memory, region_memory, name_unpack({command.values[2], command.values[3], command.values[4], command.values[5]}), command.values[6]) {
+			if !connection_add(service, ring_memory, region_memory, name_unpack({command.values[2], command.values[3], command.values[4], command.values[5]}), command.values[6], command.tag) {
 				close(ring_memory)
 				close(region_memory)
 			}
 		case .Grant:
 			for &connection in service.connections {
-				if connection.calls.head != nil && connection.ring_memory == ring_memory {
+				if connection.calls.head != nil && connection.ring_memory == ring_memory && (command.tag == 0 || connection.serial == command.tag) {
 					connection.grant = command.values[6]
 				}
 			}
@@ -194,10 +229,19 @@ service_control_run :: proc "contextless" (service: ^Service) {
 				log(.Warning, "service: the root service sent a read-only tree grant to a service that takes none: it is refused")
 				continue
 			}
-			service.tree_grant(service, ring_memory, &command.values)
+			matched := false
+			for &connection in service.connections {
+				if connection.calls.head != nil && connection.ring_memory == ring_memory && (command.tag == 0 || connection.serial == command.tag) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				service.tree_grant(service, ring_memory, &command.values)
+			}
 		case .Disconnect:
 			for &connection in service.connections {
-				if connection.calls.head != nil && connection.ring_memory == ring_memory {
+				if connection.calls.head != nil && connection.ring_memory == ring_memory && (command.tag == 0 || connection.serial == command.tag) {
 					if service.disconnected != nil {
 						service.disconnected(service, &connection)
 					}
@@ -223,6 +267,40 @@ connection_call_execute :: proc "contextless" (service: ^Service, connection: ^C
 	serving = previous
 	service.calls += 1
 	return completion
+}
+
+// service_connection_close voluntarily closes one client connection after the
+// client sent isolated.CALL_CLOSE on its call ring, freeing the service's slot
+// and notifying the root service on service.names.completions so root reclaims
+// its connection table entry immediately.
+service_connection_close :: proc "contextless" (service: ^Service, connection: ^Connection) {
+	if service == nil || connection == nil || connection.calls.head == nil {
+		return
+	}
+	ring_memory := connection.ring_memory
+	region_memory := connection.region_memory
+	serial := connection.serial
+	if service.disconnected != nil {
+		service.disconnected(service, connection)
+	}
+	ring_close(&connection.calls)
+	memory_unmap(raw_data(connection.region))
+	close(ring_memory)
+	close(region_memory)
+	connection^ = {}
+	service.connected -= 1
+	if service.names.head != nil {
+		service_pending_closes_flush(service)
+		if service.pending_close_count < len(service.pending_closes) {
+			service.pending_closes[service.pending_close_count] = ring.Record {
+				kind   = u32(isolated.Service_Completion.Client_Closed),
+				tag    = 0,
+				values = {0 = u64(ring_memory), 1 = u64(region_memory), 2 = u64(serial)},
+			}
+			service.pending_close_count += 1
+			service_pending_closes_flush(service)
+		}
+	}
 }
 
 // service_run adds and removes the connections that the root service
@@ -302,7 +380,7 @@ connection_serve :: proc "contextless" (service: ^Service, connection: ^Connecti
 // connection_add maps the two memory objects of a new caller in a free
 // place. false: no place is free, or a memory object does not map.
 @(private)
-connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle, caller: Name, grant: u64) -> bool {
+connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle, caller: Name, grant: u64, serial: u32 = 0) -> bool {
 	for &connection in service.connections {
 		if connection.calls.head != nil {
 			continue
@@ -327,6 +405,7 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 			region        = ([^]u8)(bytes)[:region_pages * PAGE_SIZE],
 			caller        = caller,
 			grant         = grant,
+			serial        = serial,
 		}
 		service.connected += 1
 		// The ring is mapped with the consent to receive handles: the caller

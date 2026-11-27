@@ -291,10 +291,28 @@ may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bo
 }
 
 // connection_ended frees what the service keeps for a connection that
-// ends: its pending changes and their memory, and its places. A later
-// connection whose ring has the same handle starts with none of them.
+// ends: any shares whose maker (directly or transitively) was this connection,
+// its read-only tree grants, its pending changes and their memory, and its
+// places. A later connection whose ring has the same handle starts with none
+// of them.
 connection_ended :: proc "contextless" (_: ^system.Service, connection: ^system.Connection) {
 	holder := connection.ring_memory
+	ended_handles: [SHARE_CAPACITY + 1]system.Handle
+	ended_handles[0] = holder
+	ended_count := 1
+	for pass := 0; pass < ended_count; pass += 1 {
+		dead := ended_handles[pass]
+		for &item in shares {
+			if item.connection.calls.head != nil && item.maker == dead {
+				share_ring := item.connection.ring_memory
+				share_end(&item)
+				if ended_count < len(ended_handles) {
+					ended_handles[ended_count] = share_ring
+					ended_count += 1
+				}
+			}
+		}
+	}
 	connection_tree_grants_clear(holder)
 	pending_drop_of(holder)
 	for &item in places {

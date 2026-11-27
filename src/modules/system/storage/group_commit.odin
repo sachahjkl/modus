@@ -580,6 +580,13 @@ storage_serve_pass :: proc "contextless" () -> (calls: int) {
 			if !has_command {
 				continue
 			}
+			if command.kind == isolated.CALL_CLOSE {
+				if group_batch.store_count > 0 {
+					group_flush()
+				}
+				system.service_connection_close(&service, &connection)
+				continue
+			}
 			storage_serve_one(&connection, command, allow_group)
 			sweep_calls += 1
 		}

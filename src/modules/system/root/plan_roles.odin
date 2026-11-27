@@ -163,7 +163,7 @@ grants_change_send :: proc "contextless" () {
 		if grant == grants_change_before[index] {
 			continue
 		}
-		_ = system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = grant}})
+		_ = system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), tag = connection.serial, values = {0 = u64(connection.ring), 6 = grant}})
 	}
 }
 

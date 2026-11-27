@@ -243,6 +243,17 @@ Service_Command :: enum u32 {
 	Tree_Grant            = 8, // Storage only: values[0] is the call ring handle; values[1..6] hold a 48-byte NUL-padded read-only image subtree path (max 47 bytes).
 }
 
+// Reserved call-ring command kind sent by a client to voluntarily close its
+// short-lived connection to a service (well past module.EXPORT_LIMIT).
+CALL_CLOSE :: u32(max(u32))
+
+// Service-to-root notification kinds on a service's names.completions ring
+// (sent with tag == 0 so they never collide with tagged Principal_Reclaim replies).
+Service_Completion :: enum u32 {
+	None          = 0,
+	Client_Closed = 0xFFFF_FFFE, // values[0]: ring handle in service; values[1]: region handle in service; values[2]: connection serial.
+}
+
 // Format property: bytes carried in values[1..6] of Service_Command.Tree_Grant
 // (6 * 8 = 48 bytes, with the last byte always NUL so a path has at most 47 bytes).
 TREE_GRANT_PATH_STORAGE :: 48

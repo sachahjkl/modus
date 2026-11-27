@@ -103,7 +103,7 @@ Fixed_Range :: enum u8 {
 	// The file of the module of the storage service, read-only, in a
 	// process that the root service connects to the storage service at its
 	// start: the process reads the descriptions of the exports there. The
-	// root service maps it, and gives its size at the value 3 of the
+	// root service maps it, and gives its size at the value 18 of the
 	// context.
 	Module_Tables = 8, // The tables of the parameters of one export, in the process that receives the call (modus:contract/isolated).
 	// A receiver maps the memory object of each table parameter there for

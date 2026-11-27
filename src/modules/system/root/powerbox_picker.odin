@@ -164,6 +164,15 @@ picker_listing_end :: proc "contextless" () {
 	picker_listing = {}
 }
 
+// picker_listing_connection_ended clears picker_listing when its storage
+// connection closes (via disconnect or voluntary Client_Closed), preventing
+// a dangling pointer dereference when the listing later times out or replies.
+picker_listing_connection_ended :: proc "contextless" (connection: ^Connection) {
+	if picker_listing.connection == connection {
+		picker_listing = {}
+	}
+}
+
 // picker_listing_refuse tells the powerbox that no list of the principal
 // comes, so the Open that waits for it ends now and not at its bound.
 @(private = "file")

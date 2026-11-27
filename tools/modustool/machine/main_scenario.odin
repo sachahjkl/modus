@@ -2816,7 +2816,7 @@ scenario := [?]Step {
 	// The table of error details of a kernel command: each wrong argument,
 	// not only the first (src/md/features/kernel_error_details.md).
 	{kind = .Wait, text = "errors: detail 1 of 2: Memory_Create: the argument budget, 0x0, names no handle of this process"},
-	{kind = .Wait, text = "errors: detail 2 of 2: Memory_Create: the argument flags has the flags 0x100; the call knows the flags 0xf"},
+	{kind = .Wait, text = "errors: detail 2 of 2: Memory_Create: the argument flags has the flags 0x100; the call knows the flags 0x7"},
 	{kind = .Wait, text = "errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must"},
 	{kind = .Wait, text = "errors: a table of 1 place: 1 more error detail did not fit in the table of error details"},
 	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},

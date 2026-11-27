@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "internal:root/principal_unlock_flow"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
@@ -545,31 +546,55 @@ principal_stores_reclaim :: proc "contextless" (asker: ^Started, tag: u32, value
 	return .Succeeded, true
 }
 
-// storage_reclaim_step drains completions from Storage's service ring and
-// forwards the matching Principal_Reclaim result to the waiting caller.
-storage_reclaim_step :: proc "contextless" (wait: ^system.Wait) {
-	if !reclaim_waiting {
+// storage_completions_drain drains Storage's service completion ring, freeing
+// any connection slot closed voluntarily by a client (Client_Closed) and
+// forwarding matching Principal_Reclaim replies to the waiting caller.
+storage_completions_drain :: proc "contextless" (holder: ^Started) {
+	if holder == nil || holder.service.head == nil {
 		return
 	}
-	holder := storage_holder()
-	if holder == nil {
-		storage_reclaim_complete(.Callee_Unavailable, {})
-		return
-	}
-	for {
+	limit := ring.capacity(&holder.service.completions)
+	for _ in 0 ..< limit {
 		record, ok := root_receive(&holder.service.completions, system.name_of(holder.name[:]))
 		if !ok {
 			break
 		}
-		if record.tag != reclaim_service_tag {
+		if record.tag == 0 {
+			completion, known := enum_word.member_of_word(isolated.Service_Completion, u64(record.kind))
+			if !known {
+				continue
+			}
+			switch completion {
+			case .None:
+			case .Client_Closed:
+				if record.values[0] >> 32 == 0 && record.values[1] >> 32 == 0 && record.values[2] >> 32 == 0 {
+					connection_closed_by_service(holder, system.Handle(record.values[0]), system.Handle(record.values[1]), u32(record.values[2]))
+				}
+			}
+			continue
+		}
+		if !reclaim_waiting || record.tag != reclaim_service_tag {
 			continue
 		}
 		outcome, unreadable := call_outcome.outcome_of_word(u64(record.kind))
 		values := outcome == .Answer_Unreadable ? errors.completion_values(unreadable) : record.values
 		storage_reclaim_complete(outcome, values)
+	}
+}
+
+// storage_reclaim_step drains completions from Storage's service ring (both
+// voluntary client closes and Principal_Reclaim replies) and registers the
+// completion ring in wait whenever Storage is running.
+storage_reclaim_step :: proc "contextless" (wait: ^system.Wait) {
+	holder := storage_holder()
+	if holder == nil {
+		if reclaim_waiting {
+			storage_reclaim_complete(.Callee_Unavailable, {})
+		}
 		return
 	}
-	if reclaim_waiting {
+	storage_completions_drain(holder)
+	if holder.service.head != nil {
 		system.wait_records(wait, &holder.service.completions)
 	}
 }
