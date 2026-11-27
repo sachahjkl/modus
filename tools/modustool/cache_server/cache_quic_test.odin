@@ -33,6 +33,7 @@ import "modus:contract/tree_hash"
 import "modus:cryptography/ed25519"
 import "modus:quic"
 import "modus:random"
+import "modustool:foundation"
 
 @(private = "file")
 Host_Udp_Transport :: struct {
@@ -1783,4 +1784,176 @@ quic_cache_publish_refuses_unauthorized_bad_sig_tampered_and_missing_child :: pr
 	resp, gerr := recipes_core.cache_quic_client_exchange(client, &get_real)
 	testing.expect_value(t, gerr, recipes_core.Cache_Client_Error.None)
 	testing.expect_value(t, resp.status, object_cache.Cache_Response_Status.Not_Found)
+}
+
+@(private = "file")
+Hold_Fetch_Worker_State :: struct {
+	endpoint:     net.Endpoint,
+	public_key:   [object_cache.PUBLIC_KEY_SIZE]u8,
+	target_hash:  blake3.Hash,
+	done:         bool,
+	client_err:   recipes_core.Cache_Client_Error,
+	status:       object_cache.Cache_Response_Status,
+	payload_hash: blake3.Hash,
+	payload_len:  int,
+}
+
+@(private = "file")
+hold_fetch_worker :: proc(t: ^thread.Thread) {
+	state := (^Hold_Fetch_Worker_State)(t.data)
+	crypto_table := cache_quic_cryptography()
+	generator: random.Generator
+	udp: Host_Udp_Transport
+	client, made := make_host_quic_client(state.endpoint, state.public_key, &crypto_table, &generator, &udp)
+	if !made {
+		state.client_err = .Start_Failed
+		sync.atomic_store(&state.done, true)
+		return
+	}
+	defer {
+		recipes_core.cache_quic_client_close(client)
+		free(client)
+		net.close(udp.socket)
+	}
+	req := object_cache.Cache_Request {
+		kind        = .Get_Object,
+		object_hash = state.target_hash,
+		object_kind = .Blob,
+		offset      = 0,
+	}
+	resp, err := recipes_core.cache_quic_client_exchange(client, &req)
+	state.client_err = err
+	state.status = resp.status
+	if err == .None && resp.status == .Ok {
+		state.payload_len = len(resp.payload)
+		state.payload_hash = blake3.hash(resp.payload)
+	}
+	sync.atomic_store(&state.done, true)
+}
+
+// Verifies the deterministic QUIC object hold/release synchronization gate
+// with no fixed sleeps: edge-case nil/zero inputs, targeted hold pausing only
+// the named object while another object serves immediately, immediate release
+// returning .Ok with verified bytes, and clean teardown with an armed hold.
+@(test)
+quic_cache_hold_and_release_object_gate :: proc(t: ^testing.T) {
+	// Edge cases on nil running pointer.
+	zero_hash: blake3.Hash
+	cache_quic_hold_object(nil, zero_hash)
+	cache_quic_release_object(nil)
+	testing.expect_value(t, cache_quic_hold_hits(nil), 0)
+	testing.expect(t, !cache_quic_wait_until_held(nil, time.Second))
+
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+
+	_, _, quic_seed := make_test_ed25519_key(0x63)
+	server, opened := cache_server_open(dir, nil)
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+
+	held_blob := transmute([]u8)string("script-fonts-held-object-payload")
+	held_hash := blake3.hash(held_blob)
+	held_hex := hash_to_hex(held_hash)
+	ok_held, _ := store_write_atomic(&server, .Objects, string(held_hex[:]), held_blob)
+	testing.expect(t, ok_held)
+
+	other_blob := transmute([]u8)string("unheld-sibling-object-payload")
+	other_hash := blake3.hash(other_blob)
+	other_hex := hash_to_hex(other_hash)
+	ok_other, _ := store_write_atomic(&server, .Objects, string(other_hex[:]), other_blob)
+	testing.expect(t, ok_other)
+
+	running, err_text := cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, quic_seed)
+	testing.expect_value(t, err_text, "")
+	if !testing.expect(t, running != nil) {
+		return
+	}
+	defer cache_quic_stop(running)
+
+	// Releasing when idle and waiting with zero timeout both behave cleanly.
+	cache_quic_release_object(running)
+	testing.expect(t, !cache_quic_wait_until_held(running, 0))
+	testing.expect(t, !cache_quic_wait_until_held(running, -time.Millisecond))
+	testing.expect(t, !cache_quic_wait_until_held(running, time.Millisecond))
+
+	// Arm the hold on held_hash and start a client fetching it on a worker thread.
+	cache_quic_hold_object(running, held_hash)
+	worker_state := Hold_Fetch_Worker_State {
+		endpoint    = running.bound_endpoint,
+		public_key  = running.public_key,
+		target_hash = held_hash,
+	}
+	worker := thread.create(hold_fetch_worker)
+	if !testing.expect(t, worker != nil) {
+		return
+	}
+	worker.data = &worker_state
+	thread.start(worker)
+
+	// Condition wait (no sleep): returns as soon as Get_Object(held_hash) enters .Held.
+	testing.expect(t, cache_quic_wait_until_held(running, foundation.HANG_BOUND))
+	testing.expect_value(t, cache_quic_hold_hits(running), 1)
+	testing.expect(t, !sync.atomic_load(&worker_state.done))
+
+	// A concurrent request for another object completes immediately while held_hash stays held.
+	crypto_table := cache_quic_cryptography()
+	generator: random.Generator
+	udp: Host_Udp_Transport
+	sibling_client, made := make_host_quic_client(running.bound_endpoint, running.public_key, &crypto_table, &generator, &udp)
+	if !testing.expect(t, made) {
+		cache_quic_release_object(running)
+		thread.join(worker)
+		thread.destroy(worker)
+		return
+	}
+	defer {
+		recipes_core.cache_quic_client_close(sibling_client)
+		free(sibling_client)
+		net.close(udp.socket)
+	}
+	other_req := object_cache.Cache_Request {
+		kind        = .Get_Object,
+		object_hash = other_hash,
+		object_kind = .Blob,
+		offset      = 0,
+	}
+	other_resp, other_err := recipes_core.cache_quic_client_exchange(sibling_client, &other_req)
+	testing.expect_value(t, other_err, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, other_resp.status, object_cache.Cache_Response_Status.Ok)
+	testing.expect_value(t, blake3.hash(other_resp.payload), other_hash)
+	testing.expect(t, !sync.atomic_load(&worker_state.done))
+
+	// Release the hold: the held worker immediately receives .Ok and verified bytes.
+	cache_quic_release_object(running)
+	thread.join(worker)
+	thread.destroy(worker)
+
+	testing.expect(t, sync.atomic_load(&worker_state.done))
+	testing.expect_value(t, worker_state.client_err, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, worker_state.status, object_cache.Cache_Response_Status.Ok)
+	testing.expect_value(t, worker_state.payload_len, len(held_blob))
+	testing.expect_value(t, worker_state.payload_hash, held_hash)
+	testing.expect_value(t, cache_quic_hold_hits(running), 0)
+
+	// After release, fetching held_hash again succeeds immediately without holding.
+	held_req := object_cache.Cache_Request {
+		kind        = .Get_Object,
+		object_hash = held_hash,
+		object_kind = .Blob,
+		offset      = 0,
+	}
+	again_resp, again_err := recipes_core.cache_quic_client_exchange(sibling_client, &held_req)
+	testing.expect_value(t, again_err, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, again_resp.status, object_cache.Cache_Response_Status.Ok)
+	testing.expect_value(t, blake3.hash(again_resp.payload), held_hash)
+	testing.expect_value(t, cache_quic_hold_hits(running), 0)
+
+	// Re-arm a hold and stop via server.stop: waiter returns false immediately without hanging.
+	cache_quic_hold_object(running, other_hash)
+	sync.atomic_store(&server.stop, true)
+	testing.expect(t, !cache_quic_wait_until_held(running, foundation.HANG_BOUND))
 }

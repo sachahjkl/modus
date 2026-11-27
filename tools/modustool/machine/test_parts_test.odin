@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modustool:build"
+import "modustool:foundation"
 
 // The whole test and each part are accepted.
 @(test)
@@ -149,6 +150,8 @@ test_accepts_and_refuses_no_shots_and_cache_flags :: proc(t: ^testing.T) {
 	testing.expect(t, filter_disk && len(extras_disk) == 3, "disk_processes adds its three disk modules")
 	filter_sp, extras_sp := test_part_fast_filter("start_policy")
 	testing.expect(t, filter_sp && len(extras_sp) == 1, "start_policy adds disk_start_policy")
+	filter_sf, extras_sf := test_part_fast_filter("script_fonts")
+	testing.expect(t, filter_sf && len(extras_sf) == 1 && extras_sf[0] == foundation.DISK_MODULE_NAME, "script_fonts adds visitor")
 	filter_hm, _ := test_part_fast_filter("host_modules")
 	testing.expect(t, !filter_hm, "host_modules builds all modules")
 	filter_rel, _ := test_part_fast_filter("release_image")

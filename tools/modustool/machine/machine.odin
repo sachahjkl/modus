@@ -19,6 +19,7 @@ import "core:time"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:cache_server"
 import "modustool:checks"
 import "modustool:fuzz"
 
@@ -244,6 +245,9 @@ Step_Kind :: enum {
 	// verify it through `modustool replay <part> <process>` against
 	// `expected` ("clean" or "diverged").
 	Export_Replay_History,
+	// Release a held object on options.cache_running (cache_quic_release_object)
+	// so a deterministic QUIC object-cache fetch resumes immediately.
+	Release_Cache_Hold,
 }
 
 // The seed of the step Power_Loss_Arm and of the loss of power
@@ -584,6 +588,7 @@ Machine :: struct {
 	range_selection: Step_Selection,
 	range_phase_started: [Step_Range_Phase]time.Tick,
 	disk_server: ^Network_Block_Device, // The data disk, when the tool serves it.
+	cache_running: ^cache_server.Cache_Quic_Running, // Local host QUIC object cache when a scenario holds and releases an object.
 	client:      Call_Client,
 	serial_input: ^Serial_Input, // The input of the serial line, when the machine has one (Machine_Options.serial_input).
 	client_open: bool,
@@ -1263,6 +1268,8 @@ Machine_Options :: struct {
 	// Host loopback UDP endpoint of a local cache-serve QUIC listener forwarded
 	// at 10.0.2.100:5010 through the peer (peer_cache.odin). Port 0: inactive.
 	cache_endpoint: net.Endpoint,
+	// Local host QUIC object cache instance controlled by Release_Cache_Hold.
+	cache_running:  ^cache_server.Cache_Quic_Running,
 	tablet: Machine_Tablet, // The virtio tablet of the machine (tablet_scenario.odin).
 	// Usable-boot QMP snapshot capture options (qmp_snapshot.odin): when
 	// snapshot_capture_tag is non-empty, runs the prelude on qcow2 drives,
@@ -1506,6 +1513,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		peer      = &peer,
 		forward   = forward,
 		disk_server = options.disk_server,
+		cache_running = options.cache_running,
 		memory_file = options.memory_file,
 		serial_input = &serial_input,
 		fact_outside_modules = options.fact_outside_modules,
@@ -2790,6 +2798,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if !replay_export_and_verify_from_machine(machine, step.text, step.expected) {
 				return false
 			}
+		case .Release_Cache_Hold:
+			if machine.cache_running == nil {
+				fmt.eprintfln("modustool: test failed: step %d: a step Release_Cache_Hold with no local QUIC object cache", index + 1)
+				return false
+			}
+			cache_server.cache_quic_release_object(machine.cache_running)
+			foundation.test_passed_print("released the object hold on the local QUIC object cache")
 		}
 		free_all(context.temp_allocator)
 	}

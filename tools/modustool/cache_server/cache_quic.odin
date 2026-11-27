@@ -13,6 +13,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/object_cache"
 import crypto_compat "modus:cryptography/compatibility_crypto"
@@ -41,7 +42,8 @@ CACHE_QUIC_POLL_INTERVAL :: 5 * time.Millisecond
 Cache_Quic_Stream_Phase :: enum u8 {
 	Reading_Header   = 0,
 	Reading_Body     = 1,
-	Writing_Response = 2,
+	Held             = 2,
+	Writing_Response = 3,
 }
 
 // Per-stream framing state for one concurrent bidirectional QUIC stream.
@@ -55,6 +57,7 @@ Cache_Quic_Stream_State :: struct {
 	send_offset:      int,
 	peer_finished:    bool,
 	close_after_send: bool,
+	held_hash:        blake3.Hash,
 	request_buf:      [dynamic]u8,
 	response_buf:     [dynamic]u8,
 }
@@ -83,6 +86,13 @@ Cache_Quic_Running :: struct {
 	streams:         []quic.Stream,
 	slots:           []Cache_Quic_Client_Slot,
 	start_tick:      time.Tick,
+	// Test-only deterministic hold barrier for one object hash: matching
+	// Get_Object requests stay in phase .Held until cache_quic_release_object.
+	hold_lock:       sync.Mutex,
+	hold_cond:       sync.Cond,
+	hold_active:     bool,
+	hold_hash:       blake3.Hash,
+	hold_hits:       int,
 }
 
 // cache_quic_cryptography builds a quic.Cryptography table backed by the modus
@@ -200,8 +210,97 @@ stream_state_clear :: proc(st: ^Cache_Quic_Stream_State) {
 	st.send_offset = 0
 	st.peer_finished = false
 	st.close_after_send = false
+	st.held_hash = {}
 	clear(&st.request_buf)
 	clear(&st.response_buf)
+}
+
+// cache_quic_hold_object arms a test-only barrier on running so any incoming
+// Get_Object request for target_hash pauses on its QUIC stream until
+// cache_quic_release_object is called. Other objects and requests proceed.
+cache_quic_hold_object :: proc(running: ^Cache_Quic_Running, target_hash: blake3.Hash) {
+	if running == nil {
+		return
+	}
+	sync.mutex_lock(&running.hold_lock)
+	running.hold_active = true
+	running.hold_hash = target_hash
+	running.hold_hits = 0
+	sync.cond_broadcast(&running.hold_cond)
+	sync.mutex_unlock(&running.hold_lock)
+}
+
+// cache_quic_release_object clears any active object hold on running so held
+// Get_Object streams resume and send their responses immediately.
+cache_quic_release_object :: proc(running: ^Cache_Quic_Running) {
+	if running == nil {
+		return
+	}
+	sync.mutex_lock(&running.hold_lock)
+	running.hold_active = false
+	running.hold_hash = {}
+	running.hold_hits = 0
+	sync.cond_broadcast(&running.hold_cond)
+	sync.mutex_unlock(&running.hold_lock)
+}
+
+// cache_quic_hold_hits returns the count of Get_Object requests that hit the
+// current object hold barrier on running.
+cache_quic_hold_hits :: proc(running: ^Cache_Quic_Running) -> int {
+	if running == nil {
+		return 0
+	}
+	sync.mutex_lock(&running.hold_lock)
+	hits := running.hold_hits
+	sync.mutex_unlock(&running.hold_lock)
+	return hits
+}
+
+// cache_quic_wait_until_held blocks until at least one Get_Object request hits
+// the active hold barrier on running, the hold is released, running stops, or
+// timeout expires. Returns true only when the barrier is active with a hit.
+cache_quic_wait_until_held :: proc(running: ^Cache_Quic_Running, timeout: time.Duration) -> bool {
+	if running == nil || timeout <= 0 {
+		return false
+	}
+	deadline := time.tick_add(time.tick_now(), timeout)
+	sync.mutex_lock(&running.hold_lock)
+	defer sync.mutex_unlock(&running.hold_lock)
+	for running.hold_active && running.hold_hits == 0 && !sync.atomic_load(&running.stop) && !sync.atomic_load(&running.server.stop) {
+		remaining := time.tick_diff(time.tick_now(), deadline)
+		if remaining <= 0 {
+			break
+		}
+		_ = sync.cond_wait_with_timeout(&running.hold_cond, &running.hold_lock, remaining)
+	}
+	return running.hold_active && running.hold_hits > 0
+}
+
+@(private = "file")
+cache_quic_hash_is_held :: proc(running: ^Cache_Quic_Running, hash: blake3.Hash) -> bool {
+	sync.mutex_lock(&running.hold_lock)
+	held := running.hold_active && running.hold_hash == hash
+	sync.mutex_unlock(&running.hold_lock)
+	return held
+}
+
+// cache_quic_try_hold_request decodes a complete Get_Object request and
+// atomically checks the active hold hash, increments hold_hits, and wakes
+// hold waiters under one hold_lock critical section.
+@(private = "file")
+cache_quic_try_hold_request :: proc(running: ^Cache_Quic_Running, frame: []u8) -> (target: blake3.Hash, held: bool) {
+	req, refusal := object_cache.decode_request(frame)
+	if refusal != .None || req.kind != .Get_Object {
+		return {}, false
+	}
+	sync.mutex_lock(&running.hold_lock)
+	defer sync.mutex_unlock(&running.hold_lock)
+	if !running.hold_active || running.hold_hash != req.object_hash {
+		return {}, false
+	}
+	running.hold_hits += 1
+	sync.cond_broadcast(&running.hold_cond)
+	return req.object_hash, true
 }
 
 @(private = "file")
@@ -338,6 +437,25 @@ slot_step_one_stream :: proc(running: ^Cache_Quic_Running, slot: ^Cache_Quic_Cli
 			}
 			return st.recv_len > before
 		}
+		if held_hash, should_hold := cache_quic_try_hold_request(running, st.request_buf[:st.expected_len]); should_hold {
+			st.held_hash = held_hash
+			st.phase = .Held
+			return false
+		}
+		resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, st.request_buf[:st.expected_len])
+		stream_queue_response(st, resp, false)
+		return true
+
+	case .Held:
+		if stream.reset_received || stream.reset_sent {
+			put_session_abort(&slot.conn.put)
+			quic.stream_reset(connection, st.stream_id, 0)
+			stream_state_clear(st)
+			return true
+		}
+		if cache_quic_hash_is_held(running, st.held_hash) {
+			return false
+		}
 		resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, st.request_buf[:st.expected_len])
 		stream_queue_response(st, resp, false)
 		return true
@@ -424,6 +542,11 @@ cache_quic_worker :: proc(t: ^thread.Thread) {
 	answer_buffer: [quic.MAX_DATAGRAM_SIZE]u8
 	released := make([]quic.Remote, running.max_connections)
 	defer delete(released)
+	defer {
+		sync.mutex_lock(&running.hold_lock)
+		sync.cond_broadcast(&running.hold_cond)
+		sync.mutex_unlock(&running.hold_lock)
+	}
 
 	for !sync.atomic_load(&running.stop) && !sync.atomic_load(&running.server.stop) {
 		defer free_all(context.temp_allocator)
@@ -608,6 +731,7 @@ cache_quic_stop :: proc(running: ^Cache_Quic_Running) {
 		return
 	}
 	sync.atomic_store(&running.stop, true)
+	cache_quic_release_object(running)
 	if running.worker != nil {
 		thread.join(running.worker)
 		thread.destroy(running.worker)
