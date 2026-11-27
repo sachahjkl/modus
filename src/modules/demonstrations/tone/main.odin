@@ -43,12 +43,13 @@ import "modus:trigonometry"
 
 // The sample region: 500 ms of frames, and the rest of its last page.
 TONE_FRAMES :: timed_stream.FRAME_RATE / 2
-REGION_PAGES :: (TONE_FRAMES * timed_stream.FRAME_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+REGION_PAGES :: 24
+#assert(REGION_PAGES == (TONE_FRAMES * timed_stream.FRAME_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 REGION_BYTES :: REGION_PAGES * system.PAGE_SIZE
 
-// What the process needs besides its region: the same as `counters`.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 204, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 180 + REGION_PAGES)
+// The sample region allocated before ready; the tool counts the module, its
+// load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{REGION_PAGES}
 
 TONE_HERTZ :: 440
 // The tone plays at this time after the frame 0 of the stream: past the

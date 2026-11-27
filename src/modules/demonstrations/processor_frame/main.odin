@@ -68,7 +68,8 @@ PIXELS_IN_A_PAGE :: PAGE_BYTES / 4
 #assert(PIXELS_IN_A_PAGE * size_of(graphics.Color) == PAGE_BYTES)
 
 // A canvas of the screen: the frame, the screen page and the background.
-SCREEN_PAGES :: SCREEN_WIDTH * SCREEN_HEIGHT / PIXELS_IN_A_PAGE
+SCREEN_PAGES :: 2025
+#assert(SCREEN_PAGES * PIXELS_IN_A_PAGE == SCREEN_WIDTH * SCREEN_HEIGHT)
 #assert(SCREEN_WIDTH * SCREEN_HEIGHT % PIXELS_IN_A_PAGE == 0)
 
 // The surfaces of the four windows, from the back to the front: sizes of
@@ -86,29 +87,21 @@ FRONT_WINDOW_HEIGHT :: 480
 #assert(SECOND_WINDOW_WIDTH * SECOND_WINDOW_HEIGHT % PIXELS_IN_A_PAGE == 0)
 #assert(THIRD_WINDOW_WIDTH * THIRD_WINDOW_HEIGHT % PIXELS_IN_A_PAGE == 0)
 #assert(FRONT_WINDOW_WIDTH * FRONT_WINDOW_HEIGHT % PIXELS_IN_A_PAGE == 0)
-WINDOW_PAGES :: (BACK_WINDOW_WIDTH * BACK_WINDOW_HEIGHT + SECOND_WINDOW_WIDTH * SECOND_WINDOW_HEIGHT + THIRD_WINDOW_WIDTH * THIRD_WINDOW_HEIGHT + FRONT_WINDOW_WIDTH * FRONT_WINDOW_HEIGHT) / PIXELS_IN_A_PAGE
+WINDOW_PAGES :: 2400
+#assert(WINDOW_PAGES == (BACK_WINDOW_WIDTH * BACK_WINDOW_HEIGHT + SECOND_WINDOW_WIDTH * SECOND_WINDOW_HEIGHT + THIRD_WINDOW_WIDTH * THIRD_WINDOW_HEIGHT + FRONT_WINDOW_WIDTH * FRONT_WINDOW_HEIGHT) / PIXELS_IN_A_PAGE)
 
 // The pictures of the draw table: one opaque picture, then one with alpha,
 // in one picture memory.
 PICTURE_SIDE :: 256
 PICTURE_PIXELS :: PICTURE_SIDE * PICTURE_SIDE
-PICTURE_PAGES :: 2 * PICTURE_PIXELS / PIXELS_IN_A_PAGE
+PICTURE_PAGES :: 128
+#assert(PICTURE_PAGES == 2 * PICTURE_PIXELS / PIXELS_IN_A_PAGE)
 #assert(2 * PICTURE_PIXELS % PIXELS_IN_A_PAGE == 0)
 
-// The process itself, as the other small processes with no window.
-PROCESS_PAGES :: 180
-// The page tables of the mappings: about 33 MiB in 8 mappings, one table
-// for each 2 MiB, one more for each mapping that does not start on a
-// 2 MiB edge, and the page directories above them.
-PAGE_TABLE_PAGES :: 32
-
-// The three canvases of the screen, the four surfaces, the pictures, the
-// process and its page tables, and the glyph memory of the copy of the
-// text rendering of the drawing module, which draws each glyph of its text
-// and reserves that memory at its first glyph. The tool reads a literal
-// only, so the assert ties it to the parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9169, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROCESS_PAGES + PAGE_TABLE_PAGES + display.GLYPH_MEMORY_PAGES_IN_THE_BUDGETS)
+// The three canvases of the screen, the four window surfaces and the two
+// picture canvases allocated before the measure rounds; the tool counts the
+// module, its load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{SCREEN_PAGES, SCREEN_PAGES, SCREEN_PAGES, WINDOW_PAGES, PICTURE_PAGES}
 
 // The frame of a window and the bar, in the form of the compositor
 // (src/modules/system/compositor/main.odin, frame_records).

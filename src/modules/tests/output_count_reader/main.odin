@@ -64,7 +64,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Counts_Read{joined_serial = u64(joined.serial), records = RECORDS_READ, first_serial = serials[0], second_serial = serials[1], third_serial = serials[2]})
 	system.stop(.Done)
 }
-
-// The tool counts the module and thread stack; working memory holds the wiring
-// ring mappings and tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

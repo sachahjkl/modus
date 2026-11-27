@@ -66,11 +66,6 @@ import "modus:random"
 import "modus:system"
 import "modus:tpm2"
 
-// One thread serves the ring, one request at a time. Its working memory
-// holds the ring, the region of its client and the buffers of one TPM
-// command and its answer, each at most one page.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 16, processes = 1, threads = 1}
-
 // The registers of locality 0 of the CRB interface, from the start of its
 // page (TCG PC Client Platform TPM Profile, the CRB interface).
 REGISTER_LOCALITY_CONTROL :: 0x08 // Bit 0: ask for the locality; bit 1: give it back.

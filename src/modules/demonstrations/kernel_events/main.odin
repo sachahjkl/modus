@@ -71,20 +71,18 @@ import rounds "internal:kernel_events/kernel_events_rounds"
 import "modus:random"
 import "modus:system"
 
-// Process_Create takes the process and its first thread from this budget.
-// The tool counts its module, a stack and a thread area for each of its 7
-// threads, and its window. The working memory: its rings, 4 processors x
-// (128 + 8192 x 64 bytes), 513; one shared page for each child, 2; the
-// load child, 592 (CHILD_BASE_PAGES + 4 loaders); the child that faults,
-// at the same time, 512 (CHILD_BASE_PAGES), because each child loads this
-// module with its imports drawing and text_rendering; its page tables;
-// the glyph memory of the drawing module, 354 pages
-// (display.TEXT_MEMORY_PAGES); and headroom: 2575 pages. Processes: itself
-// and two children at one time. Threads: its main thread, 1; the load
-// child, its main thread and 4 loaders, 5 (taken from this budget when it
-// starts, for its life); then either the child that faults or the thread
-// that empties the rings, 1, never both at one time: 7.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2575, processes = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+RINGS_FLOOR_PAGES :: 513
+LOAD_CHILD_PAGES :: 592
+#assert(LOAD_CHILD_PAGES == CHILD_BASE_PAGES + LOADERS_MOST * (op.THREAD_STACK_PAGES + 4))
+// The per-processor event rings buffer (up to 4 processors) allocated for the
+// run.
+MODULE_START_OBJECTS :: [?]system.Start_Object{RINGS_FLOOR_PAGES}
+// The load child and the faulting child started together during the run.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{LOAD_CHILD_PAGES, CHILD_BASE_PAGES}
+// Itself and two children at one time, seven threads in all; the tool counts
+// the module, its threads, its window at the largest scale, the event rings
+// and both child budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 960

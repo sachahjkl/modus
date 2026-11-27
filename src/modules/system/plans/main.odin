@@ -15,13 +15,6 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Its loop, store connection and rings at ready: 256 pages (measured peak
-// 170 pages). The first plan blocks (plan_memory.odin): 512 pages, so that
-// twice the floor holds the plans of about 8 principals of 32 generations
-// of 64 entries. A plan past the budget is refused with No_Memory.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 768, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 256 + 512)
-
 // Status record returned by the status() export.
 Plans_Status :: struct {
 	total_diffs:     i64,

@@ -34,10 +34,6 @@ import "modus:contract/start_list"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// One thread; the working memory pays its root ring, the machine parts
-// page and their page tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
-
 // The order of this start policy: the input service and the holder of the
 // display, by its role, when the machine has a screen, then the console,
 // which makes the machine usable.

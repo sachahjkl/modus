@@ -121,58 +121,26 @@ import module "modus:contract/module"
 import "modus:contract/reference_screen"
 import "base:intrinsics"
 
-// Its loop, and the thread that makes the lists of the palette. The
-// frame and the background are each the size of the screen: two screen
-// pictures (screen_pictures), which the root service pays at the size of
-// the screen of the machine, 2 x 2025 pages at 1920 x 1080 and 2 x 32 400
-// at 7680 x 4320. The working memory is the sum of these parts, at the
-// largest screen of 7680 x 4320, so a screen of any size up to it maps:
-// - the page tables of the frame and the background: 2 x 65 (132.7 MB need
-//   64 tables of 2 MiB, and one more when the start is not on a 2 MiB
-//   edge);
-// - the two screen pages: device memory, which costs no page, but 265 MB
-//   of it need up to 128 page tables;
-// - each of these three spans can cross a 1 GiB edge, and then needs a
-//   second page directory: 3 pages;
-// - the page of the display registers: a page table and a page directory,
-//   2 pages;
-// - the screen memory of the scanout of the virtual GPU (gpu_scanout.odin):
-//   2025 pages of pixels, the page of the present list, and 5 page tables:
-//   2031 pages;
-// - the mapping of the surfaces of the first windows at start: a surface
-//   at the largest size (bar.SURFACE_SCREEN_SIDE_FLOOR, 4096 x 4096 screen
-//   pixels, 128 MiB for two pictures) takes at most 65 page tables of 2 MiB
-//   and 2 page directories, 67 pages. INITIAL_WINDOW_SURFACES (4) such
-//   surfaces take 268 pages; further windows and resize mappings draw from
-//   the growth factor of the budget;
-// - the glyph memory of its two copies of the text rendering, its own
-//   (its bar, its menus, its titles) and the one of the drawing module:
-//   each draws every glyph of its text into its own private glyph cache,
-//   and reserves its memory at its first glyph: 2 x 354 pages
-//   (display.TEXT_MEMORY_PAGES) = 708 pages;
-// - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 10 pages, which the
-//   kernel takes at the first wait;
-// - the end of its record output of the acts of a wide grant: 4 pages;
-// - the stack of the worker of the role store (display_choices.odin),
-//   interface.BACKGROUND_STACK_PAGES.
-// 130 + 128 + 3 + 2 + 2031 + 268 + 708 + 10 + 4 + 64 = 3348.
-// Page tables are paid as windows map, so a desktop with more windows draws
-// from the growth factor of the budget. A screen whose frame and background
-// the budget cannot pay is named on one line, and the compositor stops
-// (entry). Four threads: the interface, the ranking of the palette, the
-// reading of a plan difference (powerbox_dialog.odin), whose work is in
-// proportion to the difference, and the worker of the role store.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3348, processes = 1, threads = 4, screen_pictures = 2}
-INITIAL_WINDOW_SURFACES :: 4
-#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + INITIAL_WINDOW_SURFACES * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES + 4 + interface.BACKGROUND_STACK_PAGES)
+// The virtual GPU scanout framebuffer at the reference screen (2025 pages)
+// plus its present list page (1 page), allocated before ready.
+GPU_SCANOUT_PAGES :: 2026
+#assert(GPU_SCANOUT_PAGES == (u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE + 1)
+// The virtual GPU scanout framebuffer and present list allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{GPU_SCANOUT_PAGES}
+
+// The frame and the background are two screen pictures (screen_pictures),
+// which the root service pays at the size of the screen of the machine.
+// Four threads run the interface loop, palette ranking, plan difference
+// reading and the role store worker. Window surface mappings and resizes
+// draw from the growth factor of the budget. A screen whose frame and
+// background the budget cannot pay is named on one line, and the compositor
+// stops (entry).
+MODULE_BUDGET :: system.Stated_Budget{threads = 4, screen_pictures = 2}
 // The request on the machine of the machine tests, whose screen is the
-// reference screen: 3348 working pages, 2 x 2025 pages of the frame and
-// the background, and the code, the data and the stacks that the tool
-// counts, under a bound of 8192 pages: 15590 pages, under the largest
-// budget of that machine (50 000 pages), so its size on a test machine is
-// twice its floor.
+// reference screen, stays under the largest budget of that machine so its
+// size on a test machine is twice its floor.
 MODULE_PAGES_BOUND :: 8192
-#assert(MODULE_BUDGET.working_memory_pages + MODULE_BUDGET.screen_pictures * ((u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + 4095) / 4096) + MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
+#assert(GPU_SCANOUT_PAGES + MODULE_BUDGET.screen_pictures * ((u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + 4095) / 4096) + MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.

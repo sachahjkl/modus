@@ -42,11 +42,14 @@ import "modus:system"
 import "modus:text_rendering"
 import "modus:vector_font"
 
-// Both copies of text rendering (2 x 354 = 708 pages), the logical hand
-// picture (1008 x 704 pixels of 4 bytes, 693 pages,
-// interface.hand_picture_pages), and 391 pages for tables and mappings
-// (measured peak at ready 3429 pages): 708 + 693 + 391 = 1792.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1792, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The logical picture in which the window draws by hand before its first frame.
+HAND_PICTURE_PAGES :: 693
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The hand-drawn window picture allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the hand picture in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels (interface.Hand_Picture).
 hand_picture: interface.Hand_Picture

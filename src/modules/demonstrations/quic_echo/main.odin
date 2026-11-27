@@ -62,13 +62,11 @@ import "modus:quic_server"
 import "modus:random"
 import "modus:system"
 
-// 16 QUIC connections of about 85 KiB each, 4 streams of about 130 KiB for
-// each, and an echo buffer of 16 KiB for each stream: about 2770 pages, in
-// one mapping of the process (docs/QUIC.md, section 6): 3667 pages. And
-// the glyph memory of the copy of the text rendering of the drawing
-// module, which draws its text: 354 pages (display.TEXT_MEMORY_PAGES).
-// 3667 + 354 = 4021.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4021, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The QUIC connection, stream and echo buffer table allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{TABLE_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the QUIC table in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	@(require_results)
@@ -108,7 +106,8 @@ ECHO_BUFFER_SIZE :: 16384
 CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * size_of(quic.Stream)
 ECHO_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * ECHO_BUFFER_SIZE
-TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + ECHO_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+TABLE_PAGES :: 2770
+#assert((CONNECTION_BYTES + STREAM_BYTES + ECHO_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE <= TABLE_PAGES)
 APPLICATION_PROTOCOL :: "kernel-remote"
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 

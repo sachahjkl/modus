@@ -145,12 +145,12 @@ import "modus:random"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// One child at a time: 512 pages and 20 threads (17 that fault in a full
-// ring, its main thread and its handler); one thread of its own that spins
-// while a child tries to name it: 2385 pages. And the glyph memory of the
-// copy of the text rendering of the drawing module, which draws its text:
-// 354 pages (display.TEXT_MEMORY_PAGES). 2385 + 354 = 2739.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2739, processes = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
+// One child at a time, started with CHILD_PAGES before ready.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CHILD_PAGES}
+// One child at a time (20 threads) and one spinning thread of its own; the
+// tool counts the module, its threads, its window at the largest scale and
+// the child budget.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the window bound of 1024 columns.

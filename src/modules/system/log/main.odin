@@ -106,9 +106,13 @@ WIDTH :: 944
 TOP_LINES :: 4
 HEIGHT :: 568
 #assert(HEIGHT == 2 * MARGIN + (TOP_LINES + ROWS) * LINE)
-// The tool counts the module, its stack and the window at the largest scale
-// (measured peak at ready 2863 pages for a floor of 4651 pages); the hand
-// picture (524 pages), tables and glyph memory fit inside the floor.
+// The logical picture in which the window draws by hand before its first frame.
+HAND_PICTURE_PAGES :: 524
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The hand-drawn window picture allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the hand picture in MODULE_START_OBJECTS.
 MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels: the window draws its

@@ -61,11 +61,13 @@ import "modus:contract/value_kinds"
 import "modus:random"
 import "modus:system"
 
-// Itself and two processes that import calendar: 808 pages. And the glyph
-// memory of the copy of the text rendering of the drawing module, which
-// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 808 + 354 =
-// 1162.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1162, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+// The budget of each of the two child processes that import calendar.
+CHILD_BUDGET_PAGES :: 256
+// The two child processes started before the first frame.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CHILD_BUDGET_PAGES, CHILD_BUDGET_PAGES}
+// Itself and two child processes that import calendar; the tool counts the
+// module, its threads, its window at the largest scale and the child budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

@@ -36,18 +36,8 @@ LARGEST_HEIGHT :: 960
 #assert(LARGEST_WIDTH == core.LARGEST_WIDTH)
 #assert(LARGEST_HEIGHT == core.LARGEST_HEIGHT)
 
-// Plan value: 2048 pages (8 MiB) working memory hold two double-buffered
-// explorer snapshots, preview buffers, layout tree, draw table, glyph cache,
-// and worker stack; 2 threads run the interface loop and storage/root worker.
-MODULE_BUDGET :: system.Stated_Budget {
-	working_memory_pages = 2048,
-	processes            = 1,
-	threads              = 2,
-	window_width         = LARGEST_WIDTH,
-	window_height        = LARGEST_HEIGHT,
-	window_least_width   = LEAST_WIDTH,
-	window_least_height  = LEAST_HEIGHT,
-}
+// The tool counts the module, its load, its stacks and 2 threads, its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 // Inline capacity: widest inspector viewport fits < 140 monospace cells;
 // 512 bytes covers 128 four-byte UTF-8 characters per visible line on the stack.

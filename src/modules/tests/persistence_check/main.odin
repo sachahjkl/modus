@@ -69,11 +69,8 @@ WIDTH :: 576
 ACTION_BAR_HEIGHT :: interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT
 HEIGHT :: 324
 #assert(HEIGHT == BODY_HEIGHT + ACTION_BAR_HEIGHT)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (365 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the window bound (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1683, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). A printable character writes the note: the caret after

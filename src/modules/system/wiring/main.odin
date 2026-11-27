@@ -34,16 +34,6 @@ import ws "modus:contract/wiring_service"
 import "internal:wiring/wiring_core"
 import "modus:system"
 
-// One thread serves SERVICE_RING, SERVICE_STOPS_RING, and mapped process
-// wiring rings. All stream rings, end pages, terms pages, description files,
-// and list pages are paid from each asker's child wiring budget.
-// Its tables grow in arenas of this budget as processes and wirings come
-// (wiring_tables.odin): 64 pages hold hundreds of each. The working memory
-// holds the wait room of the loop too, which grows with the processes
-// (wiring_wait_words): the room of 128 processes.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 69, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 64 + WIRING_WAIT_ROOM_PAGES_STATED)
-
 // The stall bound of wiring_core is the answer bound of the services.
 #assert(wiring_core.STALL_HANG_BOUND_MS == system.ANSWER_BOUND_MILLISECONDS)
 

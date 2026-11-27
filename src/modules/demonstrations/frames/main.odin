@@ -44,11 +44,15 @@ import "modus:contract/value_kinds"
 import "modus:system"
 import "modus:twins"
 
-// 8192 pages for LARGE_PAGES, four twins of 256 pages (1024 pages), the
-// glyph memory of the drawing module (354 pages, display.TEXT_MEMORY_PAGES)
-// and 30 pages for page tables (measured peak at ready 9411 pages):
-// 8192 + 1024 + 354 + 30 = 9600.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9600, processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// The 32 MiB test object allocated during the start cases.
+MODULE_START_OBJECTS :: [?]system.Start_Object{LARGE_PAGES}
+// The four twin child budgets and the small test budget created during the
+// start cases.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{TWIN_BUDGET_PAGES, TWIN_BUDGET_PAGES, TWIN_BUDGET_PAGES, TWIN_BUDGET_PAGES, SMALL_BUDGET}
+#assert(len(MODULE_START_BUDGETS) == TWIN_COUNT + 1)
+// The tool counts the module, its six processes and threads, its window at
+// the largest scale, LARGE_PAGES and the child budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -66,7 +70,8 @@ HEIGHT :: 409
 LARGE_PAGES :: 8192
 SMALL_BUDGET :: 100 // The pages of a budget that this process makes for one case.
 TWIN_COUNT :: 4
-TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, processes = 1, threads = 1, processor = 100_000, log_records = 10}
+TWIN_BUDGET_PAGES :: 256
+TWIN_AMOUNTS :: system.Budget_Amounts{pages = TWIN_BUDGET_PAGES, processes = 1, threads = 1, processor = 100_000, log_records = 10}
 
 
 // One case: what the process did, and what the kernel answered.

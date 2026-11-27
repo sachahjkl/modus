@@ -69,10 +69,6 @@ import "modus:contract/settings"
 import "modus:contract/virtio_input"
 import "modus:system"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1}
-
 // The context of this service is the layout of modus:contract/input_context,
 // which the root service writes. modus:virtio reads the BARs of the tablet
 // at the slots of package pci: the contract puts them there.

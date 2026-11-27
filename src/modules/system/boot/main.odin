@@ -44,13 +44,14 @@ WIDTH :: 976
 #assert(WIDTH == bootscreen.WIDTH)
 HEIGHT :: 708
 #assert(HEIGHT == bootscreen.HEIGHT)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1350 pages): its module, its
-// stack, its records of the kernel and its glyph memory. And the picture
-// of the logical size in which it draws by hand (interface.Hand_Picture):
-// 976 x 708 pixels of 4 bytes, 675 pages. 698 + 675 = 1373. The tool
-// counts the window at the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1373, window_width = WIDTH, window_height = HEIGHT}
+// The logical picture in which the window draws by hand before its first frame.
+HAND_PICTURE_PAGES :: 675
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The hand-drawn window picture allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the hand picture in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 data: bootscreen.Data
 

@@ -55,9 +55,6 @@ import "modus:pci"
 import "modus:system"
 import "modus:virtio"
 
-// The budget of a block service: it drives one disk through one ring.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 1, threads = 1}
-
 // The kind of a request of this test to its disk: the request types of a
 // virtio block device (virtio 1.2, section 5.2.6), written in the header
 // and never read back.

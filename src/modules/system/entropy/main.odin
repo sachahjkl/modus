@@ -44,14 +44,6 @@ import "modus:pci"
 import "modus:system"
 import "modus:virtio"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread. With the
-// IOMMU on, the tables of the domain of the device are paid from it at the
-// first Memory_Physical (src/md/infrastructure/iommu.md, "Device
-// addresses"), as for the block service: the same amount as the block
-// service.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, processes = 1, threads = 1}
-
 // The memory of the queue (pci.QUEUE_PAGES): pages 0 to 2 the virtqueue,
 // page 3 the buffer that the device writes. The device reaches no other
 // memory of this process.

@@ -57,12 +57,14 @@ import "modus:interface"
 import "modus:random"
 import "modus:system"
 
-// The largest concurrent allocation across the sequential cases is the 64 MiB
-// large-pages object (16384 pages) with its frame list and two mappings (354
-// pages for drawing glyph memory, plus page tables and margins): 17920 pages.
-// The tool counts the module, the six threads and the window at the largest
-// scale.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 17920, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+CHILD_BUDGET_PAGES :: 2048
+// The 64 MiB large-pages test object allocated across the sequential cases.
+MODULE_START_OBJECTS :: [?]system.Start_Object{LARGE_OBJECT_PAGES}
+// One child process at a time started during the sequential cases.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CHILD_BUDGET_PAGES}
+// The tool counts the module, its six threads, its window at the largest
+// scale, the large-pages object and the child budget.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
 HEIGHT :: 640

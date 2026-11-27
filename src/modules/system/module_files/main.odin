@@ -58,16 +58,18 @@ import "modus:system"
 import "modus:tcp"
 import "modus:web"
 
-// The buffers of the 4 connections (96 pages), and its tables. A file
-// passes in pieces of WRITE_PIECE bytes, so its size costs no memory.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 160, processes = 1, threads = 1}
+// The TCP send and receive buffers of the four connections, allocated before
+// ready; the tool counts the module, its load and its thread. A file passes
+// in pieces of WRITE_PIECE bytes, so its size costs no memory.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BUFFER_PAGES}
 
 // The connections at one time: one for the call that runs, and the ones
 // that wait in TIME-WAIT after earlier calls.
 CAPACITY :: 4
 SEND_SIZE :: 64 * 1024
 RECEIVE_SIZE :: 32 * 1024
-BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
+BUFFER_PAGES :: 96
+#assert(BUFFER_PAGES == CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE)
 
 // The datagram region: 256 places of 2048 bytes. Places 0 to 95 receive
 // segments; the others hold segments to send.

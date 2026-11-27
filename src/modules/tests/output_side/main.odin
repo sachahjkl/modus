@@ -148,7 +148,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	wrong("the asker did not stop this process within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 }
-
-// The tool counts the module and thread stack; working memory holds the wiring
-// ring mappings and tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

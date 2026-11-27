@@ -94,19 +94,12 @@ import "modus:random"
 import "modus:contract/root_ring"
 import "modus:system"
 
-// 32 QUIC connections of about 89 KiB each, 4 streams of about 130 KiB for
-// each, and a buffer of a request or an answer of about 64 KiB for each
-// stream: 6912 pages (TABLE_PAGES), in one mapping of the process
-// (docs/QUIC.md, section 7); the mappings of the call ring and the call
-// region of each of its 128 connections to services (the share of the root
-// service, remote.SERVICE_CONNECTIONS), which the root service makes and
-// pays: up to 4 page tables and directories each, 512 pages; the glyph
-// memory of the copy of the text rendering of the drawing module, which
-// draws its text: 354 pages (display.TEXT_MEMORY_PAGES); and the end of
-// its record output of the acts of a wide grant: 4 pages. Mesh tables
-// (mesh.odin) grow after ready from the growth factor of the budget.
-// 6912 + 512 + 354 + 4 = 7782 (measured peak at ready 10219 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7782, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its stack, its window at the largest scale and
+// the QUIC connection/stream/buffer table in MODULE_START_OBJECTS. Mesh
+// tables (mesh.odin) grow after ready from the growth factor of the budget.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
+// The QUIC connection, stream and call buffer table created before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{TABLE_PAGES}
 
 foreign _ {
 	@(require_results)
@@ -149,10 +142,8 @@ CALL_BUFFER_SIZE :: remote.ANSWER_LIMIT
 CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CALL_COUNT * size_of(quic.Stream)
 BUFFER_BYTES :: CALL_COUNT * CALL_BUFFER_SIZE
-TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + BUFFER_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-// The connections and their streams fit in the stated budget beside the
-// connections to services and the text memory.
-#assert(TABLE_PAGES + 4 * SERVICE_CONNECTION_CAPACITY + display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
+TABLE_PAGES :: 6912
+#assert((CONNECTION_BYTES + STREAM_BYTES + BUFFER_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE <= TABLE_PAGES)
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
 // The bounds of a call stream, in milliseconds of the machine. Each one

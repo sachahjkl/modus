@@ -63,19 +63,22 @@ import "modus:random"
 import "modus:system"
 import "modus:tcp"
 
-// Its table of connections with their buffers (CAPACITY): 3490 pages. And
-// the glyph memory of its own copy of the text rendering, which draws its
-// text by hand: 354 pages (display.TEXT_MEMORY_PAGES). And the picture of
-// its window, which it draws by hand at its logical size: 976 x 680 pixels
-// of 4 bytes, 649 pages (interface.hand_picture_pages). 3490 + 354 + 649 =
-// 4493.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4493, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The logical picture in which the window draws by hand before its first frame.
+HAND_PICTURE_PAGES :: 649
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The hand-drawn window picture and TCP connection buffer pool allocated
+// before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES, BUFFER_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the start objects in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
 REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).
 SEND_SIZE :: 64 * 1024
 RECEIVE_SIZE :: 32 * 1024
-BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
+BUFFER_PAGES :: 1152
+#assert(BUFFER_PAGES == CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE)
 
 // The datagram region: 256 places of 2048 bytes.
 PLACE_SIZE :: 2048

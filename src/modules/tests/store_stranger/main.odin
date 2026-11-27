@@ -18,9 +18,6 @@ import "modus:contract/isolated"
 import "modus:contract/module"
 import "modus:system"
 
-// Two calls, and the rows of an answer that must not come.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64}
-
 // The bytes for the rows of window_grants: an answer would fill them.
 rows: [4096]u8
 

@@ -51,11 +51,8 @@ import "modus:interface"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The main thread and up to 31 threads that hold their registers: 928
-// pages. And the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 928 + 354 = 1282.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1282, processes = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and 32 threads, its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{threads = 32, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the window bound of 1024 columns.

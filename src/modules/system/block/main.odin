@@ -75,10 +75,6 @@ import "modus:pci"
 import "modus:system"
 import "modus:virtio"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, processes = 1, threads = 1}
-
 FEATURE_FLUSH :: 9 // The device has a cache for writes, and the request Flush.
 
 // A request of the device: a header that the device reads, the data, and a

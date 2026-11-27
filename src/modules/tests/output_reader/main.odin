@@ -138,7 +138,3 @@ unended_read :: proc "contextless" () {
 	}
 	system.log_fact(.Info, Unended_Read{stop_cause = op.Stop_Cause_Word(end.stop_cause), stop_outcome = op.Stop_Outcome_Word(end.stop_outcome), end_word = value_kinds.text_field(output.end_word_names[end.end_word], END_WORD_FIELD_BYTES)})
 }
-
-// The tool counts the module and thread stack; working memory holds the wiring
-// ring mappings and tables (measured peak at ready 105 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

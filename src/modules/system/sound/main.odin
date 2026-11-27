@@ -43,12 +43,9 @@ import "modus:pci"
 import "modus:system"
 import "modus:virtio"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread. As for the
-// entropy service, the tables of the domain of the device under the IOMMU
-// are paid from it; the periods and their list take PERIOD_PAGES + 1 more,
-// and the map of the sample region of the client its page tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 190, processes = 1, threads = 1}
+// The contiguous audio period buffer allocated before ready; the tool counts
+// the module, its load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{PERIOD_PAGES}
 
 // The memory of the queues (pci.QUEUE_PAGES): pages 0 to 2 the control
 // queue, pages 3 to 5 the transmit queue, page 6 the messages that the
@@ -70,7 +67,8 @@ MESSAGE_SLOT_BYTES :: 16
 #assert(MESSAGE_STATUSES + timed_stream.PERIODS_GIVEN * MESSAGE_SLOT_BYTES <= system.PAGE_SIZE)
 
 // The periods that the device reads: one memory object of this process.
-PERIOD_PAGES :: (timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+PERIOD_PAGES :: 2
+#assert(PERIOD_PAGES == (timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 
 // The queues of a virtio sound device (virtio 1.2, 5.14.2).
 QUEUE_CONTROL :: 0

@@ -46,32 +46,20 @@ import "modus:system"
 STATE_PAGES_OF_16_GIB :: 10704
 
 // Its fixed tables are data of its module, so the tool counts them with the
-// module: the changes of one commit (8 MB), the leaves of one version
-// index, the versions of one object for versions(), the nodes of the trees
-// of one commit and of one read, the walks of the trees, the pending blocks
-// of the ranges (4 MB), the object nodes that one commit copies (7 MB), the
-// pages and the heads of the stores of the store table (4 MB), and the
-// buffers of the content trees (7 MB). The tables of the blocks have the
-// size of the disk, so they are working memory (storage_mount.open_with_forms): 6 bytes and
-// 3 bits for each block, the hash index, the cache and the staging of the
-// count tree. The working memory holds them for a disk of 16 GiB (2^22
-// blocks: storage_mount.state_layout gives 10 704 pages), which is more
-// than the form that reads the counts from the count tree takes with its
-// largest cache (8 326 pages): a larger disk opens from its count tree
-// (src/md/data/storage_capacity.md, "The counts of names live on the disk"). With them,
-// the regions of the connections and the rest of the pages that the
-// service had before the tool counted (1 829 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12533, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 1829 + STATE_PAGES_OF_16_GIB)
-// On the machine of the machine tests (50 000 pages per process), the working
-// memory and the fixed static tables of the module (under 10 240 pages, 40 MiB)
-// stay well below the largest budget so no test boot writes Budget_Part_Limited.
-// On the smallest machine (16 384 pages), the static tables and base working
-// pages (1 829) leave memory for storage_mount.open_with_forms, which halves
-// its disk tables and count-tree cache when the budget refuses.
+// module. The block transfer region (REGION_BLOCKS) and the tables of the
+// blocks for a disk of 16 GiB (STATE_PAGES_OF_16_GIB, which exceeds the
+// largest count-tree cache of 8 326 pages used for larger disks;
+// src/md/data/storage_capacity.md) are created before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{REGION_BLOCKS, STATE_PAGES_OF_16_GIB}
+// On the machine of the machine tests (50 000 pages per process), the start
+// objects and the fixed static tables of the module (under 10 240 pages, 40
+// MiB) stay below the largest budget so no test boot writes Budget_Part_Limited.
+// On the smallest machine (16 384 pages), the static tables and transfer
+// region leave memory for storage_mount.open_with_forms, which halves its
+// disk tables and count-tree cache when the budget refuses.
 STORAGE_MODULE_PAGES_BOUND :: 10240
-#assert(MODULE_BUDGET.working_memory_pages + STORAGE_MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
-#assert(1829 + STORAGE_MODULE_PAGES_BOUND <= module.LARGEST_BUDGET_LEAST_PAGES)
+#assert(REGION_BLOCKS + STATE_PAGES_OF_16_GIB + STORAGE_MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
+#assert(REGION_BLOCKS + STORAGE_MODULE_PAGES_BOUND <= module.LARGEST_BUDGET_LEAST_PAGES)
 
 // refuse writes the error record of a refusal and gives its call outcome:
 // the last result of a procedure of this service that gives the outcome of

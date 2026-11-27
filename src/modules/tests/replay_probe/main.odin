@@ -45,12 +45,24 @@ import "modus:random"
 import "modus:system"
 import terminal "modus:terminal"
 
-// The test process, a child at a time, and the threads of both. The
-// working memory pays each child (including a recorded console child and its
-// 1024-page terminal text region or stand-in mapping on replay), its
-// histories, and the point copies and shared-page baselines that the kernel
-// takes from the budget of a history.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6400, processes = 2, threads = 2}
+SHARED_PAGES :: 1
+READER_BUDGET_PAGES :: 256
+CONSOLE_BUDGET_PAGES :: 4096
+// Terminal ring pages for the recorded console child (matches ring.PAGE_COUNT).
+TERMINAL_RING_PAGES :: 2
+// Terminal text region pages for the recorded console child (matches terminal.TEXT_PAGES).
+TERMINAL_TEXT_PAGES :: 1024
+#assert(TERMINAL_RING_PAGES == ring.PAGE_COUNT)
+#assert(TERMINAL_TEXT_PAGES == terminal.TEXT_PAGES)
+// The original and replay console histories, the terminal ring and 1024-page
+// text region (or replay stand-in mappings), and the reader shared page.
+MODULE_START_OBJECTS :: [?]system.Start_Object{CONSOLE_HISTORY_PAGES, CONSOLE_HISTORY_PAGES, TERMINAL_RING_PAGES, TERMINAL_TEXT_PAGES, SHARED_PAGES}
+// One child at a time: the console child needs 4096 pages, which also covers
+// the 256-page reader child.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CONSOLE_BUDGET_PAGES}
+// The test process, one child at a time, and the threads of both; the tool
+// counts the module, its threads, its history/terminal objects, and child budget.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2, threads = 2}
 
 // The value of the context that gives the role. Not the value 0: the root
 // service writes there the size of the boot image of the grant Image.
@@ -166,6 +178,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	log_handle = ctx.handles[op.CONTEXT_LOG]
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	system.ready()
 	test_run()
 	if right_count == CASE_COUNT {
 		system.log_fact(.Info, Probe_Held{cases = CASE_COUNT})

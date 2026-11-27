@@ -252,6 +252,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.stop(.Done)
 }
 
-// The tool counts the module, thread stack and derived wiring budget; working
-// memory holds the wiring ring mappings and tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512}
+// Wiring budget for the pacing rings and list page; the tool counts the
+// module, its load and its thread.
+MODULE_BUDGET :: system.Stated_Budget{wiring_pages = 512}

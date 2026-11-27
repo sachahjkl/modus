@@ -121,13 +121,8 @@ LEAST_HEIGHT :: 320
 #assert(LEAST_HEIGHT >= TOP_BAND_HEIGHT + 4 * graphics.CELL_HEIGHT + STATUS_HEIGHT + interface.ACTION_BAR_ROW_HEIGHT)
 LARGEST_WIDTH :: 1280
 LARGEST_HEIGHT :: 960
-// The tool counts the module, the stack and the window at its largest size
-// cut to the reference screen (4050 pages)
-// (docs/MODULE_CONTRACT.md, "The floor of a module"). 1024 working pages
-// hold the glyph memory (354 pages), text buffers, store client and page
-// tables (measured peak at ready 1791 pages); a resize surface draws from
-// the growth factor of the budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = WIDTH, window_least_height = LEAST_HEIGHT}
+// The tool counts the module, its load, its stacks and its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = WIDTH, window_least_height = LEAST_HEIGHT}
 CARET_WIDTH :: 2
 // The bytes of one display row as the frame draws it: each cell is one
 // character of at most 4 bytes, or a space of a tab.

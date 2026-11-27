@@ -59,13 +59,8 @@ import "modus:interface"
 import box_layout "modus:layout"
 import "modus:system"
 
-// The draw tables of the interface, and the tables of the rows: 2536
-// pages. And the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 2536 + 354 = 2890. The layout tree and the
-// states of its boxes are in the memory of the module, which the tool
-// counts; it counts the window at its largest size.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2890, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The tool counts the module, its load, its stacks and its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
 LINE :: graphics.LINE_HEIGHT
 ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.

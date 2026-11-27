@@ -17,8 +17,8 @@ package replay_rdrand_probe
 import "base:intrinsics"
 import "modus:system"
 
-// Small fixed budget: one thread and no window or child processes.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
+// Small fixed budget: one thread and no window, objects, or child processes.
+MODULE_BUDGET :: system.Stated_Budget{processes = 1, threads = 1}
 
 // Maximum retry attempts if the hardware random generator reports carry clear.
 RDRAND_ATTEMPTS :: 32

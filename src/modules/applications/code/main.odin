@@ -43,17 +43,8 @@ KEY_F2 :: 0x3C
 // Plan value: private store object name for the binary MODAST1 codebase.
 CODEBASE_OBJECT_NAME :: "codebase.ast"
 
-// Plan value: working memory budget covers AST pools, projected tokens,
-// undo snapshots, store transfer buffers, glyph cache, and two thread stacks.
-MODULE_BUDGET :: system.Stated_Budget{
-	working_memory_pages = 2048,
-	processes            = 1,
-	threads              = 2,
-	window_width         = LARGEST_WIDTH,
-	window_height        = LARGEST_HEIGHT,
-	window_least_width   = LEAST_WIDTH,
-	window_least_height  = LEAST_HEIGHT,
-}
+// The tool counts the module, its load, its stacks and 2 threads, its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 // Plan value: capacity of the in-memory MODAST1 snapshot ring for instant
 // Ctrl+Z undo and Ctrl+Y redo.

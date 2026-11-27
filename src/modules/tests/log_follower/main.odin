@@ -267,7 +267,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
-// Measured at ready: 102 working pages past the counted floor and derived
-// wiring carve. 256 working pages cover the connection, list page and wired
-// follow ring with headroom.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}
+// Wiring budget for the list page and follow ring; the tool counts the
+// module, its load and its thread.
+MODULE_BUDGET :: system.Stated_Budget{wiring_pages = 256}

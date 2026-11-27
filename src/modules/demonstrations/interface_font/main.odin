@@ -51,15 +51,14 @@ import "modus:text_rendering"
 WIDTH :: 800
 HEIGHT :: 760
 
-// The glyph memory of its two copies of the text rendering: its own, which
-// draws the lines of B612 and the Greek letters by hand, and the one of
-// the drawing module, which draws its labels. Each reserves its memory at
-// its first glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES). The picture
-// of its window, which it draws by hand at its logical size: 800 x 760
-// pixels of 4 bytes, 594 pages (interface.hand_picture_pages). And the page
-// tables of the script font set, 64 MiB at most: 32 pages. 708 + 594 + 32 =
-// 1334.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1334, window_width = WIDTH, window_height = HEIGHT}
+// The logical picture in which the window draws by hand before its first frame.
+HAND_PICTURE_PAGES :: 594
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The hand-drawn window picture allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the hand picture in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels (interface.Hand_Picture).
 hand_picture: interface.Hand_Picture

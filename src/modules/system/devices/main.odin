@@ -15,11 +15,6 @@ import rd "modus:contract/root_delegation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// Working memory budget for the freestanding devices service process and its
-// fixed-capacity identity and binding tables, and the shared region of the
-// root service (measured peak at ready 89 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 96, processes = 1, threads = 1}
-
 // Status record returned by the status() export.
 Devices_Status :: struct {
 	identity_count:  i64,

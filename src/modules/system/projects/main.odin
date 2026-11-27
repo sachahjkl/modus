@@ -17,9 +17,6 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding projects service process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}
-
 // Status record returned by the status() export.
 Projects_Status :: struct {
 	total_inputs_queries: i64,

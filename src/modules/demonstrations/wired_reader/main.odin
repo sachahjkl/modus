@@ -73,8 +73,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Numbers_Read{numbers = NUMBERS_WRITTEN})
 	system.stop(.Done)
 }
-
-// Measured at ready: 194 pages total (counted floor 119 pages, 75 working
-// pages for the wired input ring and its mapping). 128 working pages cover
-// the wired input with headroom.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128}

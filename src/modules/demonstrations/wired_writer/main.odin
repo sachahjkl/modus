@@ -44,8 +44,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Numbers_Written{numbers = NUMBERS_WRITTEN, readers = u64(readers)})
 	system.stop(.Done)
 }
-
-// Measured at ready: 194 pages total (counted floor 118 pages, 76 working
-// pages for the wired output ring and its mapping). 128 working pages cover
-// the wired output with headroom.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128}

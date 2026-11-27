@@ -71,7 +71,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Probes_Written{probes = PROBES_OF_A_SIDE})
 	system.stop(.Done)
 }
-
-// The tool counts the module and thread stack; working memory holds the wiring
-// ring mappings and tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

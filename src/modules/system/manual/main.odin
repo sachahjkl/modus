@@ -103,12 +103,9 @@ WIDTH :: 889
 #assert(WIDTH == LIST_WIDTH + MARGIN + COLUMNS * CELL_WIDTH + SCROLL_GAP + SCROLL_WIDTH)
 HEIGHT :: 576
 #assert(HEIGHT == ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1001 pages), plus the pages of
-// box_tree for modus:layout. The tool counts the window at the largest scale
-// (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1105, window_width = WIDTH, window_height = HEIGHT}
-#assert(MODULE_BUDGET.working_memory_pages >= 1047 + (size_of(box_tree) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The tool counts the module, its fixed layout tree, its stack and its window
+// at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // layout_refresh solves the layout tree for width x height using the element
 // tokens of the appearance in force and records last_boxes.

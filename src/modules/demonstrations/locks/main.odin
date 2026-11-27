@@ -57,13 +57,17 @@ import "modus:contract/ring"
 import "modus:random"
 import "modus:system"
 
-// The window presents before starting the lockers and checks. Four lockers
-// of 1024 pages (4096 pages), the glyph memory of the drawing module (354
-// pages) and overhead take 5120 working pages; the sequential check cases
-// (wait room 672 pages, unmap mapping 4097 pages, untouched page 2048 pages,
-// churn processes 1536 pages) run after ready and fit inside twice the
-// floor.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5120, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+BOARD_PAGES :: 1
+LOCKER_BUDGET_PAGES :: 1024
+// The shared benchmark board page allocated before starting the lockers.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOARD_PAGES}
+// Four locker child processes started with fixed budgets.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{LOCKER_BUDGET_PAGES, LOCKER_BUDGET_PAGES, LOCKER_BUDGET_PAGES, LOCKER_BUDGET_PAGES}
+#assert(len(MODULE_START_BUDGETS) == lockers.LOCKER_CAPACITY)
+// The window presents before starting the lockers and sequential checks; the
+// tool counts the module, its threads, its window at the largest scale, the
+// board page and the four locker budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

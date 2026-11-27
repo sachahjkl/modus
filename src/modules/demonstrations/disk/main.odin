@@ -87,11 +87,11 @@ WIDTH :: 860
 #assert(WIDTH == ENTRIES_X + BAR_WIDTH + 70)
 HEIGHT :: 312
 #assert(HEIGHT == 12 + 4 * LINE + len(measures) * LINE + 3 * LINE + 12)
-// The tool counts the module, the stack and the window at the largest scale
-// (docs/MODULE_CONTRACT.md, "The floor of a module"). 640 working pages
-// hold the 1 MiB data region (REGION_PAGES, 256 pages), the glyph memory
-// (354 pages) and page tables (measured peak at ready 1288 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 640, window_width = WIDTH, window_height = HEIGHT}
+// The 1 MiB contiguous data region allocated before the first frame.
+MODULE_START_OBJECTS :: [?]system.Start_Object{REGION_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the data region in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 Measure :: struct {
 	write:   bool,

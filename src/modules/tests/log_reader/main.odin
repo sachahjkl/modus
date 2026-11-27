@@ -136,12 +136,11 @@ import "modus:contract/value_kinds"
 import "modus:random"
 import "modus:system"
 
-// Its rows and its call region, 64 pages, the budgets of its two children,
-// CHILD_PAGES each, and the budget of its storm child, STORM_PAGES: no
-// window, its one thread and the thread of each child. The child of the
-// log limit runs after the storm child stopped, and takes CHILD_PAGES of
-// the pages that the storm gave back, its process and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1152, processes = 4, threads = 4}
+// The two child processes and the storm child started during the test.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CHILD_PAGES, CHILD_PAGES, STORM_PAGES}
+// Four processes and four threads: the test process, two children and the
+// storm child; the tool counts the module, its threads and the child budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 4, threads = 4}
 
 // The children: the same module, with the value VALUE_CHILD of the
 // context. The root service writes no value there, so a process that it

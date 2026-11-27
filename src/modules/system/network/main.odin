@@ -95,7 +95,7 @@ import "modus:system"
 
 PLACE_COUNT :: 256 // The places of the frame region, frame.PLACE_SIZE bytes each.
 RECEIVE_PLACES :: 128 // Places 0 to 127: frames that arrive. 128 to 255: frames to send.
-REGION_PAGES :: PLACE_COUNT * frame.PLACE_SIZE / system.PAGE_SIZE
+REGION_PAGES :: 128
 
 // The endpoints of the processes: one for each process that holds a grant
 // of the network. The loop waits on the command queue of each endpoint, two
@@ -1475,7 +1475,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 #assert(PORT_FIRST + ENDPOINT_CAPACITY <= TCP_PORT_FIRST && TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK <= 65536)
 #assert(SEND_HEADER_COPIED <= datagram.DATAGRAM_LEAST && SEND_HEADER_COPIED <= datagram.SEGMENT_LEAST)
 
-// Measured at ready: 425 pages total (counted floor 328 pages, 97 working
-// pages for the frame ring, region and control ring). 256 working pages
-// hold the initial rings and endpoint mappings with headroom.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}
+// The contiguous frame region created before ready; the tool counts the
+// module, its load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{REGION_PAGES}

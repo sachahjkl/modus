@@ -101,19 +101,14 @@ import "modus:system"
 import terminal "modus:terminal"
 import "base:intrinsics"
 
-// The lines that it keeps, and the initial surface of its window at start:
-// their size follows the columns and the rows that its starter gives and the
-// scale, so the tool cannot count them. The lines take 3840 pages, the
-// initial surface up to 1800 pages (measured peak 5405 pages), and the glyph
-// memory of both copies of the text rendering takes 2 x 354 pages
-// (display.TEXT_MEMORY_PAGES) = 708 pages. 3840 + 1800 + 708 = 6348
-// (checked under the type Line). A resize to the reference screen (two
-// surfaces of 4050 pages at once) happens after ready and fits inside twice
-// the floor. A window larger than the logical screen of a scale does not
-// fit: display.surface_resize declines the resize with a line, and a rescale
-// declines the scale. The cells of the largest grid are in the module: the
-// tool counts them.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6348, processes = 1, threads = 2}
+// The floor window size holds the initial terminal surface at scale 2;
+// resizing up to the reference screen draws from the growth factor of the
+// budget.
+WINDOW_FLOOR_WIDTH :: 960
+WINDOW_FLOOR_HEIGHT :: 540
+// Two threads run the interface loop and the terminal ring reader; the tool
+// counts the module, its stacks, its window and MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = WINDOW_FLOOR_WIDTH, window_height = WINDOW_FLOOR_HEIGHT}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT
@@ -363,15 +358,25 @@ Line :: struct {
 	length:    u32, // Bytes of UTF-8.
 }
 
-// The working memory of the floor holds the lines, the initial window
-// surface and both glyph caches; twice the working memory holds the lines,
-// two full surfaces of the reference screen during a resize and both glyph
-// caches.
-LINES_PAGES :: (LINE_CAPACITY * size_of(Line) + RUN_CAPACITY * size_of(Run) + BYTE_CAPACITY + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+// The three line, run and byte buffers allocated before the first frame.
+LINES_AREA_PAGES :: 256
+RUNS_AREA_PAGES :: 1536
+BYTES_AREA_PAGES :: 2048
+#assert(LINES_AREA_PAGES == (LINE_CAPACITY * size_of(Line) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+#assert(RUNS_AREA_PAGES == (RUN_CAPACITY * size_of(Run) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+#assert(BYTES_AREA_PAGES == (BYTE_CAPACITY + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The three ring buffers of kept terminal lines created before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{LINES_AREA_PAGES, RUNS_AREA_PAGES, BYTES_AREA_PAGES}
+
+// The start objects and the floor window hold the lines, the initial window
+// surface and both glyph caches; twice that floor holds the lines, two full
+// surfaces of the reference screen during a resize and both glyph caches.
+LINES_PAGES :: LINES_AREA_PAGES + RUNS_AREA_PAGES + BYTES_AREA_PAGES
 INITIAL_SURFACE_PAGES :: 1800
+WINDOW_FLOOR_PAGES :: display.PICTURE_COUNT * ((2 * WINDOW_FLOOR_WIDTH) * (2 * WINDOW_FLOOR_HEIGHT) * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 SCREEN_SURFACE_PAGES :: (display.PICTURE_COUNT * reference_screen.WIDTH * reference_screen.HEIGHT * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(LINES_PAGES + INITIAL_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
-#assert(2 * MODULE_BUDGET.working_memory_pages >= LINES_PAGES + 2 * SCREEN_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES)
+#assert(LINES_PAGES + INITIAL_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES <= LINES_PAGES + WINDOW_FLOOR_PAGES)
+#assert(2 * (LINES_PAGES + WINDOW_FLOOR_PAGES) >= LINES_PAGES + 2 * SCREEN_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES)
 
 lines: [^]Line
 runs: [^]Run

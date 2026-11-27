@@ -46,10 +46,8 @@ import "modus:contract/value_kinds"
 import "modus:system"
 import "base:intrinsics"
 
-// The tool counts the module, the nine threads and the window at the largest
-// scale. The working memory holds the glyph memory of the drawing module
-// (354 pages) and page tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and 9 threads, its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 PICTURE_WIDTH :: 448
 PICTURE_HEIGHT :: 320

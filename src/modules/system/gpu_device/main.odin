@@ -26,11 +26,6 @@ import "modus:pci"
 import "modus:system"
 import "modus:virtio"
 
-// The working memory: the IOMMU domain tables paid at the first
-// Memory_Physical call, the queue and control message mappings, and the page
-// tables of the client framebuffer region.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 190, processes = 1, threads = 1}
-
 // Memory layout inside pci.GRANT_QUEUES (pci.QUEUE_PAGES == 8):
 // pages 0..2 hold the control virtqueue, pages 3..6 hold the outbound
 // command buffer, and page 7 holds the inbound response buffer. The command

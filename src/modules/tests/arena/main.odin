@@ -136,8 +136,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.stop(.Done)
 }
-
-// Measured at ready: 103 pages total (counted floor 113 pages). 256 working
-// pages give the arena exhaustion test room to grow and commit before
-// hitting the budget limit.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

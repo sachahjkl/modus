@@ -29,10 +29,6 @@ package flood
 import "modus:system"
 import terminal "modus:terminal"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 1, threads = 1}
-
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
 KEY_LINES :: 256 // The lines between two looks at the keys.
 ROUND :: 100_000_000 // The lines of one round of the status.

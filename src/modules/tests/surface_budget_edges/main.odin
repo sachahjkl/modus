@@ -28,8 +28,8 @@ import "modus:system"
 WIDTH :: 100
 HEIGHT :: 100
 
-// The window and the budgets of the surfaces that it gives.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 window_ring: ring.Ring
 ring_memory: system.Handle

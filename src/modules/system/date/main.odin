@@ -299,7 +299,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 }
-
-// Measured at ready: 106 pages total (counted floor 122 pages). 64 working
-// pages hold the date and settings mappings and service connections.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64}

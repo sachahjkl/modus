@@ -20,12 +20,10 @@ import "modus:system"
 // The pages of the arena that holds the grants that processes hold.
 TABLE_PAGES :: 512
 
-// Working memory floor for the freestanding powerbox service process: the
-// grants arena (TABLE_PAGES) and service rings/mappings (256 pages;
-// measured peak at ready 760 pages). Picker store arenas grow after ready
-// from the growth factor of the budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 768, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == TABLE_PAGES + 256)
+// The grants table arena created before ready; the tool counts the module,
+// its load and its thread. Picker store arenas reserve lazily on first
+// growth after ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{TABLE_PAGES}
 
 // Status record returned by the status() export required by Role.Powerbox.
 Powerbox_Status :: struct {
@@ -71,9 +69,27 @@ store_push_allowed :: proc "contextless" (arena: ^system.Arena, bytes, alignment
 }
 
 // stores_grow gives the core rows_least rows in place, and a new index of
-// four slots for each row, a power of two.
+// four slots for each row, a power of two. The picker store arenas reserve
+// lazily on first growth so they do not spend pages before ready.
 @(private = "file")
 stores_grow :: proc "contextless" (_: rawptr, state: ^powerbox_core.Powerbox_State, rows_least: int) -> bool {
+	if store_arena.base == nil {
+		amounts, budget_status := system.budget_read()
+		if budget_status != .Succeeded {
+			return false
+		}
+		reserve := system.arena_reservation_pages(amounts.pages)
+		status: call_outcome.Call_Outcome
+		if store_arena, status = system.arena_create(reserve); status != .Succeeded {
+			return false
+		}
+		if store_index_arena, status = system.arena_create(reserve); status != .Succeeded {
+			_ = system.arena_end(&store_arena)
+			return false
+		}
+		store_arena.exact_commits = true
+		store_index_arena.exact_commits = true
+	}
 	rows := len(state.stores)
 	if rows_least > rows {
 		bytes := u64(rows_least - rows) * size_of(powerbox_core.Session_Store)
@@ -105,8 +121,8 @@ stores_grow :: proc "contextless" (_: rawptr, state: ^powerbox_core.Powerbox_Sta
 	return true
 }
 
-// tables_make takes the held grants from the table arena, and starts the
-// stores empty, in their arena of the size of the budget.
+// tables_make takes the held grants from the table arena and wires lazy
+// store-arena growth.
 @(private = "file")
 tables_make :: proc "contextless" () -> (tables: powerbox_core.Powerbox_Tables, ok: bool) {
 	status: call_outcome.Call_Outcome
@@ -114,19 +130,6 @@ tables_make :: proc "contextless" () -> (tables: powerbox_core.Powerbox_Tables, 
 	if status != .Succeeded {
 		return {}, false
 	}
-	amounts, budget_status := system.budget_read()
-	if budget_status != .Succeeded {
-		return {}, false
-	}
-	reserve := system.arena_reservation_pages(amounts.pages)
-	if store_arena, status = system.arena_create(reserve); status != .Succeeded {
-		return {}, false
-	}
-	if store_index_arena, status = system.arena_create(reserve); status != .Succeeded {
-		return {}, false
-	}
-	store_arena.exact_commits = true
-	store_index_arena.exact_commits = true
 	grant_rows := u64(TABLE_PAGES) * system.PAGE_SIZE / size_of(powerbox_core.Held_Grant)
 	grants, grant_status := system.arena_push(&table_arena, grant_rows * size_of(powerbox_core.Held_Grant), align_of(powerbox_core.Held_Grant))
 	if grant_status != .Succeeded {

@@ -232,7 +232,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.stop(.Done)
 }
 
-
-// Measured peak at ready: 120 pages; 256 pages of working memory cover the
-// recipe specs and connection mappings.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

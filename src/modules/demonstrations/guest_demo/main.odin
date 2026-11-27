@@ -53,12 +53,13 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The process itself and its guest. The working memory holds what the
-// counted parts do not: the load of the process (its page tables, its
-// stack guard, the copy of its writable data), one page of guest memory,
-// the page tables of the guest and the two pages that the first run takes.
-// 180 pages, as the other small processes that hold no window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 2, threads = 1}
+// One page of guest code/data memory created before ready.
+GUEST_MEMORY_PAGES :: 1
+// The switching pages and guest memory page allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{SWITCHING_PAGES, GUEST_MEMORY_PAGES}
+// The process itself and its guest; the tool counts the module, its load,
+// its thread and the start objects in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2}
 
 // The name of the guest process in the reports and on the log.
 GUEST_NAME :: "guest_demo guest"

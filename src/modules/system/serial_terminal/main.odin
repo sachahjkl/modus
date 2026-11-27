@@ -16,10 +16,6 @@ import "internal:serial_terminal/ansi_terminal"
 import "modus:system"
 import terminal_records "modus:terminal"
 
-// Working memory for the terminal ring mapping, text region, ANSI staging
-// buffer and the intake with its completion list, and one service thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, threads = 1}
-
 // The size of the screen when the context gives none in the bounds.
 DEFAULT_COLUMNS :: 80
 DEFAULT_ROWS :: 24

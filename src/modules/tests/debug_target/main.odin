@@ -40,7 +40,7 @@ import "base:intrinsics"
 import "modus:system"
 
 // Its main thread, and one thread that only waits.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1954, processes = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{threads = 2}
 
 // What the process does now.
 Phase :: enum u8 {

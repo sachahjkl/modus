@@ -33,9 +33,6 @@ import "modus:system"
 REVOKED_ITEMS :: 4000
 ITEM_BYTES :: 9 // "item0000," with its comma.
 
-// A connection, two objects of at most 10 pages, the text of the items.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128}
-
 // The decisions that plan_diff_poll gives (plans_recipes.Plan_Display_Decision).
 DECISION_PENDING :: 0
 DECISION_ACCEPTED :: 1

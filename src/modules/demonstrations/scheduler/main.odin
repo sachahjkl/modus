@@ -123,15 +123,8 @@ import "modus:contract/value_kinds"
 import "modus:random"
 import "modus:system"
 
-// Threads: 12 spinners, two threads that wake each other, one that sleeps,
-// a changer, a thread that starts threads; later, with its first thread,
-// the 15 threads of the four processes of the shares, or 8 spinners of its
-// own. Processes: itself and those four. The tool counts its module, the 24
-// threads, its window at the largest scale and its start budgets
-// (MODULE_START_BUDGETS). The working memory holds the glyph memory of the
-// drawing module (354 pages) and page tables (measured peak at ready 2518
-// pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 448, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and 5 processes, 24 threads, its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // Pages per share child process (modules, stack, context, page tables) and
 // pages for the placement blockers child (16 pages per thread).

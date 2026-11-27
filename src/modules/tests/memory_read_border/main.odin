@@ -15,13 +15,14 @@ import "modus:system"
 
 OBJECT_PAGES :: 4
 OBJECT_BYTES :: OBJECT_PAGES * system.PAGE_SIZE
-LARGE_PAGES :: op.MEMORY_READ_LIMIT / system.PAGE_SIZE
+LARGE_PAGES :: 256
+#assert(LARGE_PAGES == op.MEMORY_READ_LIMIT / system.PAGE_SIZE)
 // The byte that a refused read must leave in the buffer.
 UNTOUCHED :: 0xAA
 
-// The objects of the cases, the buffer of 1 MiB, the code.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 576}
-#assert(MODULE_BUDGET.working_memory_pages == 2 * LARGE_PAGES + 64)
+// The small test object and two 1 MiB objects created during the test; the
+// tool counts the module, its 1 MiB buffer, its load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{OBJECT_PAGES, LARGE_PAGES, LARGE_PAGES}
 
 buffer: [op.MEMORY_READ_LIMIT]u8
 

@@ -61,10 +61,12 @@ import "modus:contract/value_kinds"
 import "modus:random"
 import "modus:system"
 
-// Two children at a time, the process that is debugged and a second
-// debugger, each with a budget of two threads; its main thread, and one
-// thread of its own that only waits.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1860, processes = 3, threads = 6}
+CHILD_BUDGET_PAGES :: 256
+// Two child processes at a time: the debugged process and a second debugger.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CHILD_BUDGET_PAGES, CHILD_BUDGET_PAGES}
+// Two children at a time, each with two threads, plus its main thread and
+// waiting thread; the tool counts the module, its threads and child budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 3, threads = 6}
 
 // The value of the context that gives the role of a child. Not the value 0:
 // the root service writes there the size of the boot image of the grant

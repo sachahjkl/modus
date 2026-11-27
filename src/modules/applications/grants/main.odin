@@ -19,15 +19,15 @@ import "modus:interface"
 import box_layout "modus:layout"
 import "modus:system"
 
-// Computed: working memory holds module state (~90 pages), glyph cache
-// (display.TEXT_MEMORY_PAGES), worker stack (interface.BACKGROUND_STACK_PAGES),
-// and module/stack overhead matching the resizable notes application budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1700, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// Two threads run the interface loop and the background worker; the tool
+// counts the module, its fixed tables, its stacks and its window at the
+// largest scale.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 #assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)
 WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
 WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
 WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(u64(MODULE_BUDGET.working_memory_pages) + WINDOW_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES)
+#assert(WINDOW_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES)
 
 // Preallocated frame drawing memory and layout tree (never on the stack).
 window_memory: interface.Window_Memory(512, 16384)

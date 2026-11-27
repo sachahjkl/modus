@@ -19,21 +19,14 @@ import "modus:contract/wide_grants"
 import "modus:storage_port"
 import "modus:system"
 
-// The pages of the tables of the collector, its code and its fixed state.
-COLLECTOR_TABLE_PAGES :: 160
-
-// The working memory of the collector: its tables, and the window, the
-// place and the row of the index of each of the three act spaces of a wide
-// grant, which it commits as each space opens (space_window_memory.odin).
-// The root service widens the budget by wide_grants.SPACE_AUDIT_PAGES for
-// each audit that its start list declares (src/md/features/wide_grants.md,
-// "The starter pays for the audits").
 // Its wiring pages are the rings of the act records of a wide grant, which
 // the root service asks in its name: the pages of an asker, and for each act
 // ring its compartments, its end page and its description file. The root
-// service carves its wiring budget to that measure.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1, wiring_pages = 28}
-#assert(181 == COLLECTOR_TABLE_PAGES + wide_grants.ACT_SPACES_RESERVED * wide_grants.SPACE_AUDIT_PAGES)
+// service carves its wiring budget to that measure, and widens the budget by
+// wide_grants.SPACE_AUDIT_PAGES for each audit that its start list declares
+// (src/md/features/wide_grants.md, "The starter pays for the audits"). The
+// tool counts the module, its fixed tables, its load and its thread.
+MODULE_BUDGET :: system.Stated_Budget{wiring_pages = 28}
 #assert(28 == COLLECTOR_ACT_WIRING_PAGES)
 
 // The compartment of an act record in its ring, and the pages of one act

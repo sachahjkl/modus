@@ -58,13 +58,14 @@ PART_X :: RIGHTS_X + (32 + 1) * graphics.CELL_WIDTH
 WIDTH :: 800
 #assert(WIDTH == PART_X + 35 * graphics.CELL_WIDTH + MARGIN)
 HEIGHT :: 668
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1044 pages): its module, its
-// stack, its tables and its glyph memory. And the picture of the logical
-// size in which it draws by hand (interface.Hand_Picture): 800 x 668
-// pixels of 4 bytes, 522 pages. 1004 + 522 = 1526. The tool counts the
-// window at the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1526, window_width = WIDTH, window_height = HEIGHT}
+// The logical picture in which the window draws by hand before its first frame.
+HAND_PICTURE_PAGES :: 522
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+// The hand-drawn window picture allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the hand picture in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels: the window draws by
 // hand, and the drawing module puts the picture on the screen at the scale

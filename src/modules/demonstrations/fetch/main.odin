@@ -78,11 +78,13 @@ ANSWER_X :: 40 * graphics.CELL_WIDTH
 // tool reads the window of the budget.
 HEIGHT :: 504
 #assert(HEIGHT == 16 + 2 * LINE + CASE_CAPACITY * (LINE + graphics.LINE_HEIGHT) + LINE + 16)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (961 pages): its module, its
-// stack, its tables, its window memory and its glyph memory. The tool
-// counts the window at the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1087, window_width = WIDTH, window_height = HEIGHT}
+BUFFER_PAGES :: 96
+#assert(BUFFER_PAGES == CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE)
+// The TCP send and receive buffers of the connections allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BUFFER_PAGES}
+// The tool counts the module, its stack, its window at the largest scale and
+// the connection buffers in MODULE_START_OBJECTS.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 Case :: struct {
 	text:   string,
@@ -514,7 +516,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
 	// The buffers of the connections: memory of this process, which gives
 	// the library all the memory that it uses.
-	BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
 	if memory_status != .Succeeded || buffers_status != .Succeeded {

@@ -150,10 +150,10 @@ compositor_screen_pages_needed :: proc() -> u64 {
 	return 2 * COMPOSITOR_SCREEN_CANVAS_PAGES + 2 * CANVAS_TABLES + SCREEN_PAGE_TABLES + SPAN_DIRECTORIES + REGISTER_TABLES + RESIZE_MAPPINGS
 }
 
-// compositor_budget_problem reads the stated budget of a source of the
-// compositor and gives "" when its working memory plus its stated screen
-// pictures hold the pages that the reference screen needs, else the
-// sentence of the fault.
+// compositor_budget_problem reads the stated budget and start objects of a
+// source of the compositor and gives "" when its working memory, start
+// objects and stated screen pictures hold the pages that the reference screen
+// needs, else the sentence of the fault.
 @(private = "file")
 compositor_budget_problem :: proc(path, source: string) -> string {
 	state: build.Describe_State
@@ -165,10 +165,19 @@ compositor_budget_problem :: proc(path, source: string) -> string {
 	if !build.budget_request_read(file, &budget) || !budget.stated {
 		return "the source states no budget"
 	}
+	module_folder := path[:max(strings.last_index_byte(path, '/'), 0)]
+	start_objects, start_ok := build.start_objects_of_sources(module_folder, {{path = path, source = source}})
+	if !start_ok {
+		return "the source has refused start objects"
+	}
+	start_object_pages: u64
+	for pages in start_objects {
+		start_object_pages += pages
+	}
 	needed := compositor_screen_pages_needed()
-	held := budget.parts.working_memory_pages + budget.parts.screen_pictures * COMPOSITOR_SCREEN_CANVAS_PAGES
+	held := budget.parts.working_memory_pages + start_object_pages + budget.parts.screen_pictures * COMPOSITOR_SCREEN_CANVAS_PAGES
 	if held < needed {
-		return fmt.tprintf("the compositor states %d pages (%d working memory and %d screen pictures); the reference screen and the resizes need %d at least", held, budget.parts.working_memory_pages, budget.parts.screen_pictures, needed)
+		return fmt.tprintf("the compositor states %d pages (%d working memory, %d start objects and %d screen pictures); the reference screen and the resizes need %d at least", held, budget.parts.working_memory_pages, start_object_pages, budget.parts.screen_pictures, needed)
 	}
 	return ""
 }
@@ -176,8 +185,9 @@ compositor_budget_problem :: proc(path, source: string) -> string {
 // The stated budget of the compositor holds the reference screen. The same
 // check refuses a source that states 4411 pages, the budget counted at a
 // screen of 1024 x 768, and a source one page short; it takes the exact
-// amount, both when stated in working memory alone and when screen_pictures
-// carries the frame and the background.
+// amount, both when stated in working memory alone, when screen_pictures
+// carries the frame and the background, and when MODULE_START_OBJECTS carries
+// the scanout object alongside screen_pictures.
 @(test)
 compositor_budget_holds_the_reference_screen :: proc(t: ^testing.T) {
 	path :: "src/modules/system/compositor/main.odin"
@@ -204,4 +214,10 @@ compositor_budget_holds_the_reference_screen :: proc(t: ^testing.T) {
 	working_with_screen := needed - 2 * COMPOSITOR_SCREEN_CANVAS_PAGES
 	testing.expectf(t, compositor_budget_problem("budget.odin", source_of(working_with_screen - 1, 2)) != "", "a budget one page short with 2 screen pictures holds the reference screen")
 	testing.expect_value(t, compositor_budget_problem("budget.odin", source_of(working_with_screen, 2)), "")
+
+	start_object_source :: proc(object_pages: u64) -> string {
+		return strings.concatenate({"package compositor\n\nSCANOUT :: ", fmt.tprintf("%d", object_pages), "\n// Scanout.\nMODULE_START_OBJECTS :: [?]system.Start_Object{SCANOUT}\n// Its loop.\nMODULE_BUDGET :: system.Stated_Budget{threads = 4, screen_pictures = 2}\n"}, context.temp_allocator)
+	}
+	testing.expectf(t, compositor_budget_problem("budget.odin", start_object_source(working_with_screen - 1)) != "", "a start object one page short with 2 screen pictures holds the reference screen")
+	testing.expect_value(t, compositor_budget_problem("budget.odin", start_object_source(working_with_screen)), "")
 }

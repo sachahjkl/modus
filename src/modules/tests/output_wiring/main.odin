@@ -1128,6 +1128,6 @@ asker_case :: proc "contextless" () -> ! {
 	system.stop(.Done)
 }
 
-// Working memory for the wiring test rings, list page and lent handles; the
-// tool adds the derived wiring budget and counts the module and stack.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512}
+// Wiring budget for the test rings, list page and limit-case wirings; the
+// tool counts the module, its load and its thread.
+MODULE_BUDGET :: system.Stated_Budget{wiring_pages = 768}

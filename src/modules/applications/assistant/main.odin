@@ -37,42 +37,19 @@ import "modus:system"
 // cells, and 24 lines.
 WIDTH :: 760
 HEIGHT :: 560
-// The working memory, counted from the sizes of the state below (the
-// checks after it tie the literal to them; the tool counts the window at
-// the window bound, docs/MODULE_CONTRACT.md, "The floor of a module"):
-//
-//   talk               7 860 424 bytes  288 entries of 16 KiB text + 4 KiB act line, 16 kept tables of 64 rows and staging copy
-//   view_layouts         617 472        the layout of each entry: its lines
-//   view_places            4 624        the place of each entry in the view
-//   result_slots         394 032        the lines of 6 results that a frame paints
-//   layout_lines          65 624        the lines that measure a result at its layout
-//   result_scratch        20 480        the description and the rows of one draw
-//   window_memory        139 256        the two draw tables of the worst frame
-//   box_tree             213 520        the modus:layout tree of each frame
-//   typed                  4 096        the request that the principal types
-//   the rest of the state, the port of the act dialog: some hundred bytes
-//
-// 2276 pages; then 1748 pages for the stack, the small tables and the glyph
-// memory, as paint states them for itself, which this process draws as,
-// 354 pages for the glyph memory of the drawing module (display.TEXT_MEMORY_PAGES),
-// 16 pages for the store worker stack (STORE_THREAD_STACK_PAGES), and 1452 pages
-// for the full PERSIST_MAX_BYTES snapshot arena (STORE_WORKING_PAGES):
-// 2276 + 1748 + 354 + 16 + 1452 = 5846.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5846, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// Two threads run the interface loop and the store worker; the tool counts
+// the module, its fixed tables, its stacks and its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
-// The pages of the stack, the small tables and the glyph memory, as paint
-// counts them (src/modules/demonstrations/paint/main.odin).
-STACK_AND_GLYPH_PAGES :: 1748
-STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(box_tree) + size_of(typed) + size_of(typed_count) + size_of(display_port) + size_of(store_state)
-STATE_PAGES :: (STATE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(MODULE_BUDGET.working_memory_pages == STATE_PAGES + STACK_AND_GLYPH_PAGES + display.TEXT_MEMORY_PAGES + STORE_THREAD_STACK_PAGES + STORE_WORKING_PAGES)
 // The window at the largest scale, cut to the reference screen, two
 // pictures, as the tool counts it: the budget stays under the largest
 // budget of a module.
 WINDOW_SCREEN_WIDTH :: min((u64(WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
 WINDOW_SCREEN_HEIGHT :: min((u64(HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
 WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(u64(MODULE_BUDGET.working_memory_pages) + WINDOW_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES)
+STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(box_tree) + size_of(typed) + size_of(typed_count) + size_of(display_port) + size_of(store_state)
+STATE_PAGES :: (STATE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+#assert(STATE_PAGES + WINDOW_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES)
 
 MARGIN :: 12
 INPUT_HEIGHT :: 28

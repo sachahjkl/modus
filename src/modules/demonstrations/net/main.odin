@@ -135,11 +135,8 @@ MEASURES_Y :: 16 + 2 * LINE + CASES_HEIGHT + LINE + LINE / 2
 HEIGHT :: 700
 #assert(HEIGHT == MEASURES_Y + 3 * LINE + graphics.LINE_HEIGHT + 8)
 #assert(HEIGHT <= 712) // The window bound of 768 lines, less the bar and the title of the window.
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1357 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 691, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 
 Case :: struct {

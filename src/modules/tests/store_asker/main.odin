@@ -19,9 +19,6 @@ import "modus:contract/module"
 import "modus:contract/powerbox"
 import "modus:system"
 
-// A connection, a call and a wait: no table of its own.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64}
-
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	connection, file := display_connect(ctx)

@@ -68,18 +68,15 @@ import "modus:quic_server"
 import "modus:random"
 import "modus:system"
 
-// The memory follows the screen in force. The copy of the screen and the
-// two pictures of the capture face are three screen pictures
-// (screen_pictures), which the root service pays at the size of the screen
-// of the machine: 3 x 2025 pages at 1920 x 1080, 3 x 8100 at 3840 x 2160,
-// 3 x 32 400 at 7680 x 4320. The working memory is the rest: the 8 QUIC
-// connections and their streams, 438 pages (TABLE_PAGES); the header of
-// the capture face, 1 page; the page tables of the three pictures at the
-// largest screen, 3 x 65; and the page tables of the other mappings, 66.
-// 438 + 1 + 195 + 66 = 700. A machine whose share of a process is smaller
-// than the screen gets less, and the face is refused with its line; the
-// service runs on.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 700, processes = 1, threads = 1, screen_pictures = 3}
+// The copy of the screen and the two pictures of the capture face are three
+// screen pictures (screen_pictures), which the root service pays at the size
+// of the screen of the machine. The tool counts the module, its thread and
+// the QUIC connection/stream table in MODULE_START_OBJECTS. A machine whose
+// share of a process is smaller than the screen gets less, and the face is
+// refused with its line; the service runs on.
+MODULE_BUDGET :: system.Stated_Budget{screen_pictures = 3}
+// The QUIC connection and stream table allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{TABLE_PAGES}
 
 foreign _ {
 	@(require_results)
@@ -131,7 +128,8 @@ CAPACITY :: protocol.CONNECTION_CAPACITY
 STREAMS_PER_CONNECTION :: 1
 CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * size_of(quic.Stream)
-TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+TABLE_PAGES :: 438
+#assert((CONNECTION_BYTES + STREAM_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE <= TABLE_PAGES)
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
 // The bounds of a viewer frame, in milliseconds of the machine: its records must go
@@ -155,10 +153,6 @@ RECEIVE_PLACES :: 64
 #assert(CAPACITY <= display.CAPTURE_VIEWER_CAPACITY)
 // A viewer frame takes the rectangles of the damage of its viewer.
 #assert(interface.DAMAGE_CAPACITY <= protocol.VIEWER_FRAME_RECTANGLE_LIMIT)
-// The QUIC tables, the header of the face and the page tables of three
-// pictures of the largest screen fit the stated working memory; the
-// pictures themselves are screen pictures.
-#assert(TABLE_PAGES + display.CAPTURE_HEADER_PAGES + 3 * 65 <= MODULE_BUDGET.working_memory_pages)
 #assert(MODULE_BUDGET.screen_pictures == 3) // The copy and the two pictures of capture_size_take.
 
 // The records to the compositor that its ring did not take: the commands of

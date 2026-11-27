@@ -165,7 +165,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Border_Held{limit = CARDS_LIMIT, name_bytes = len(PROCESS_NAME)})
 	system.stop(.Done)
 }
-
-// Measured at ready: 121 pages total (counted floor 119 pages, 2 working
-// pages). 64 working pages cover the compositor connection with headroom.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64}

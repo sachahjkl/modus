@@ -51,14 +51,20 @@ import "modus:interface"
 import "modus:random"
 import "modus:system"
 
-// A table of 65536 readings in a memory object (640 pages), and two call
-// hosts (sample, hostile_exports) with their threads: 2561 pages. And the
-// glyph memory of its own copy of the text rendering, which draws its text
-// by hand: 354 pages (display.TEXT_MEMORY_PAGES). And the picture of its
-// window, which it draws by hand at its logical size: 1000 x 704 pixels of
-// 4 bytes, 688 pages (interface.hand_picture_pages). 2561 + 354 + 688 =
-// 3603.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3603, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+HAND_PICTURE_PAGES :: 688
+#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+LARGE_TABLE_PAGES :: 640
+#assert(LARGE_TABLE_PAGES == (LARGE_COUNT * size_of(Reading) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+CALL_HOST_BUDGET_PAGES :: 512
+#assert(CALL_HOST_BUDGET_PAGES == system.CALL_HOST_PAGES)
+// The hand-drawn window picture and the 65536-reading table allocated before
+// ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES, LARGE_TABLE_PAGES}
+// The two call hosts (sample and hostile_exports) started before ready.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{CALL_HOST_BUDGET_PAGES, CALL_HOST_BUDGET_PAGES}
+// Itself and two call hosts; the tool counts the module, its threads, its
+// window at the largest scale, its start objects and its child budgets.
+MODULE_BUDGET :: system.Stated_Budget{processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels (interface.Hand_Picture).
 hand_picture: interface.Hand_Picture

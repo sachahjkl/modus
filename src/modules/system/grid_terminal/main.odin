@@ -17,10 +17,6 @@ import "modus:graphics"
 import "modus:system"
 import terminal_records "modus:terminal"
 
-// Working memory for the terminal ring mapping, text region, cell grid and
-// the intake with its completion list, and one thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, threads = 1}
-
 // The size of the grid when the context gives none in the bounds.
 DEFAULT_COLUMNS :: 80
 DEFAULT_ROWS :: 25

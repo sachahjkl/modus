@@ -41,11 +41,9 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The process itself and the region of the reads: 180 pages, as the other
-// small processes that hold no window, and the pages of the region. The
-// tool reads a literal only, so the assert ties it to the region.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 692, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 180 + REGION_PAGES)
+// The 2 MiB measurement region allocated during the test; the tool counts
+// the module, its load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{REGION_PAGES}
 
 // The turns of the loop of case 3, and the least count of instructions that
 // the loop retires: each turn retires at least its store, whatever the

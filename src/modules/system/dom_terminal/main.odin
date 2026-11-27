@@ -17,10 +17,6 @@ import "internal:dom_terminal/dom_protocol"
 import "modus:system"
 import terminal_records "modus:terminal"
 
-// Working memory for the terminal ring mapping, the text region, the line
-// buffer and the intake with its completion list, and one service thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 48, threads = 1}
-
 line_buffer: [dom_protocol.LINE_LIMIT]u8
 intake: terminal_records.Renderer_Intake
 serial_port: terminal_records.Serial_Port

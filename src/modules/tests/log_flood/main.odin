@@ -68,7 +68,3 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.stop(.Done)
 }
-
-// The tool counts the module and thread stack; working memory holds the wiring
-// ring mappings and tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

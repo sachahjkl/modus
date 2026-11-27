@@ -64,10 +64,6 @@ import "modus:pci"
 import "modus:system"
 import "modus:virtio"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, processes = 1, threads = 1}
-
 // The features of a virtio network device that this service takes.
 FEATURE_MAC :: 5 // The configuration has the hardware address.
 FEATURE_STATUS :: 16 // The configuration has the state of the link.

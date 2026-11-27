@@ -43,10 +43,8 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The tool counts the module, the thread and the window at the largest
-// scale. The working memory holds the glyph memory of the drawing module
-// (354 pages), page tables and the dummy receiving process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its load, its stacks and 2 processes, its window at the largest scale.
+MODULE_BUDGET :: system.Stated_Budget{processes = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
