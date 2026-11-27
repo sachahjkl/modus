@@ -230,7 +230,6 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
 	other := strings.repeat("o", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
 	third := strings.repeat("c", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
-	resource := strings.repeat("r", 31, context.temp_allocator)
 	largest_size := u64(max(i64))
 	hash: [module.HASH_SIZE]u8
 	for &value, index in hash {
@@ -286,7 +285,6 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		expect(t, render(t, file, "Debug_Store_Given", {{"principal", count}, {"debugger", process}, {"target", other}}), line_of_before("root: gave ", sentence.Module_Name{process}, " a connection that reads only to the store ", STORE_NAME, " of principal ", count, ", for the debug object of ", sentence.Module_Name{other}))
 		expect(t, render(t, file, "Debug_Stop_Report_Given", {{"principal", count}, {"debugger", process}, {"target", other}, {"caller", third}}), line_of_before("root: gave ", sentence.Module_Name{process}, " the kept stop report of ", sentence.Module_Name{other}, " and a connection that reads only to the store ", STORE_NAME, " of principal ", count, ", for ", sentence.Module_Name{third}))
 		expect(t, render(t, file, "Store_Name_Too_Long", {{"principal", count}, {"caller", process}}), line_of_before("root: the name of the store of ", sentence.Module_Name{process}, " for principal ", count, " has more than 31 bytes: no connection"))
-		expect(t, render(t, file, "Resource_Given", {{"resource_size", min(count, largest_size)}, {"resource", resource}, {"receiver", process}}), line_of_before("root: the resource ", resource, " (", sentence.Size{min(count, largest_size), .Bytes}, ") is given to ", sentence.Module_Name{process}, ", read-only"))
 		expect(t, render(t, file, "Import_Scan_Started", {{"imports", count}, {"loaded_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " imports ", count, " modules that the boot image does not hold: the import scan reads the store ", STORE_NAME, " to find them by the hash of their bytes"))
 		font_problems := font_outlines.problem_sentences
 		for problem in font_problems {

@@ -414,6 +414,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			theme_not_valid_log(target.resource, theme.hash != mapped.hash, problem)
 		}
 	}
+	// Release the temporary storage connection handles while keeping the
+	// read-only pointer theme mappings alive for the lifetime of this window.
+	storage.close(&client)
 	if theme_count == 0 {
 		system.log_fact(.Info, No_Pointer_Theme{})
 		system.stop(.Failed)

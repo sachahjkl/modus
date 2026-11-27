@@ -1,9 +1,10 @@
 package compositor
 
-// The pointer (docs/POINTERS.md): the compositor maps the pointer theme file
-// that the root service gives, validates it once, chooses the pointer shape
-// from what is under the pointer, and draws its pointer picture with a blend
-// of premultiplied alpha, at the place of the pointer less the hot spot.
+// The pointer (docs/POINTERS.md): the compositor maps the pointer theme
+// objects from the granted `pointer_themes` tree through the storage service
+// at startup, validates each theme once on first use, chooses the pointer
+// shape from what is under the pointer, and draws its pointer picture with a
+// blend of premultiplied alpha, at the place of the pointer less the hot spot.
 //
 // The place of the pointer (pointer_x, pointer_y, and compositor.pointer())
 // is the point where a press acts; the hot spot of the picture is drawn
@@ -11,7 +12,6 @@ package compositor
 // frame, and only while it shows.
 
 import "modus:contract/enum_word"
-import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:contract/settings"
@@ -20,14 +20,16 @@ import "internal:compositor/bar"
 import "modus:graphics"
 import "modus:interface"
 import "internal:compositor/palette"
+import "modus:storage"
 import "modus:system"
 
-// The values of the context that give the theme file, mapped read-only.
-VALUE_POINTER_THEME_ADDRESS :: 6
-VALUE_POINTER_THEME_SIZE :: 7
-// The places of the address and the size of each theme: the second one is
-// at the values that modus:contract/operation names for it.
-POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
+// Exact image-tree paths mapped through storage, in the preference order of
+// pointer_pictures.RESOURCE_PREFERENCE.
+@(rodata)
+POINTER_THEME_PATHS := [len(pointer_pictures.RESOURCE_PREFERENCE)]string {
+	"pointer_themes/posy",
+	"pointer_themes/system",
+}
 // The nominal size of the pointer in logical pixels. The compositor asks
 // for it in pixels of the screen at the scale: the smallest size of the
 // theme that is at least that one. The theme of the system has 24, 30, 33
@@ -80,34 +82,43 @@ pointer_drawn_valid: bool
 pointer_measure_frames, pointer_measure_time, pointer_measure_longest: u64
 pointer_frame_time: u64
 
-// The theme files that the root service gives, in the order of
+// The theme objects mapped read-only from storage, in the order of
 // pointer_pictures.RESOURCE_PREFERENCE, and the state of each one. A file
 // is validated at its first use, once: the boot validates the theme that
 // the setting chooses, not both (on the software processor of a browser
 // machine the two took 11 s).
 Pointer_Theme_State :: enum u8 {
-	Absent    = 0, // The root service gave no file there.
-	Unchecked = 1, // Mapped, never validated.
+	Absent    = 0, // Storage did not serve this theme object.
+	Unchecked = 1, // Mapped read-only from storage, never validated.
 	Valid     = 2,
 	Refused   = 3, // Not valid: never used.
 }
+pointer_theme_mapped: [len(pointer_pictures.RESOURCE_PREFERENCE)]storage.Mapped_Object
 pointer_theme_files: [len(pointer_pictures.RESOURCE_PREFERENCE)][]u8
 pointer_theme_states: [len(pointer_pictures.RESOURCE_PREFERENCE)]Pointer_Theme_State
 
-// pointer_theme_open maps nothing: the root service mapped the files, the
-// first one at the values 6 and 7, the second at the values that
-// modus:contract/operation names for it. It chooses the theme of the
-// owner, which validates that file only.
-pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
-	for index in 0 ..< len(pointer_theme_files) {
-		address := ctx.values[POINTER_THEME_VALUES[index][0]]
-		size := ctx.values[POINTER_THEME_VALUES[index][1]]
-		if address == 0 || size == 0 {
+// pointer_theme_load maps both pointer themes read-only from the granted
+// `pointer_themes` tree at startup, before the display choices worker runs
+// and before any draw frame, so live theme switches never block a frame.
+pointer_theme_load :: proc "contextless" (store: ^storage.Client, store_open: bool) {
+	if !store_open {
+		return
+	}
+	for path, index in POINTER_THEME_PATHS {
+		mapped, _, map_status, _ := storage.map_object(store, path)
+		if map_status != .Ok || len(mapped.bytes) == 0 {
+			storage.mapped_object_close(&mapped)
 			continue
 		}
-		pointer_theme_files[index] = ([^]u8)(uintptr(address))[:size]
+		pointer_theme_mapped[index] = mapped
+		pointer_theme_files[index] = mapped.bytes
 		pointer_theme_states[index] = .Unchecked
 	}
+}
+
+// pointer_theme_open chooses the theme of the owner from the pointer theme
+// objects mapped at startup, validating that file only.
+pointer_theme_open :: proc "contextless" () {
 	pointer_theme_choose(.Of_The_Owner)
 	if pointer_theme == nil {
 		system.log_fact(.Warning, No_Pointer_Theme{})

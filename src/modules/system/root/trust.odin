@@ -34,7 +34,7 @@ trust_boot_report: op.Boot_Report
 trust_file_check: info.File_Check
 // The entries of the boot image whose bytes have the hash of their entry:
 // every entry after the check at the start, or each one at its first use.
-// The loads of this service (load_source) and resource_mapping read it.
+// The loads of this service (load_source) and image_entry_mapping read it.
 image_checks: system.Image_Checks
 
 // image_entry_give says whether the pages of an entry of the boot image

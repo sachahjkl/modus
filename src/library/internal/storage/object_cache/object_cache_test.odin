@@ -495,3 +495,57 @@ pins_list_scoped_isolates_principals_and_stores :: proc(t: ^testing.T) {
 	testing.expect_value(t, w_zero, 0)
 	testing.expect_value(t, t_zero, 2)
 }
+
+// Per-principal quota isolation: when principal 1 is at its own quota,
+// private_admit_need returns Need_Principal_Pages (never Need_Global_Or_Slot),
+// even when principal 2 holds idle entries and global capacity remains.
+// Need_Global_Or_Slot is returned only when principal_used + pages fits
+// principal_private_pages and the global ceiling or slot table is full.
+@(test)
+private_admit_need_isolates_principal_quota :: proc(t: ^testing.T) {
+	cache: Cache
+	cache_init(&cache, {
+		machine_budget_pages    = 8,
+		global_private_pages    = 6,
+		principal_private_pages = 4,
+	})
+
+	// Adversarial edges: nil cache, zero pages, pages exceeding principal or global cap.
+	testing.expect_value(t, private_admit_need(nil, 1, 1), Private_Admit_Need.Impossible)
+	testing.expect_value(t, private_admit_need(&cache, 1, 0), Private_Admit_Need.Impossible)
+	testing.expect_value(t, private_admit_need(&cache, 1, 5), Private_Admit_Need.Impossible)
+	testing.expect_value(t, private_admit_need(&cache, 1, 7), Private_Admit_Need.Impossible)
+	testing.expect_value(t, private_admit_need(&cache, 1, 4), Private_Admit_Need.Ready)
+
+	// Fill principal 1 to its 4-page quota (all active) and principal 2 to 1 page (idle).
+	_, r1 := insert_private(&cache, 1, 1, test_hash(60), 601, 4096, 4)
+	testing.expect_value(t, r1, Insert_Result.Inserted)
+	_, r2 := insert_private(&cache, 2, 2, test_hash(61), 602, 4096, 1)
+	testing.expect_value(t, r2, Insert_Result.Inserted)
+
+	// Principal 1 wants 1 more page: global has 1 free page, principal 2 has an
+	// idle entry, yet principal 1 MUST see Need_Principal_Pages so only
+	// Same_Principal eviction is attempted.
+	testing.expect_value(t, private_admit_need(&cache, 1, 1), Private_Admit_Need.Need_Principal_Pages)
+
+	// Principal 2 wants 2 pages: principal 2 uses 1+2 <= 4 (fits own quota),
+	// while global uses 5+2 > 6 -> Need_Global_Or_Slot.
+	testing.expect_value(t, private_admit_need(&cache, 2, 2), Private_Admit_Need.Need_Global_Or_Slot)
+
+	// Principal 2 wants 1 page: 1+1 <= 4 and 5+1 <= 6 -> Ready.
+	testing.expect_value(t, private_admit_need(&cache, 2, 1), Private_Admit_Need.Ready)
+
+	// Slot-table exhaustion with ample per-principal and global page budget
+	// returns Need_Global_Or_Slot.
+	slot_cache: Cache
+	cache_init(&slot_cache, {
+		machine_budget_pages    = 8,
+		global_private_pages    = u64(PRIVATE_CACHE_CAPACITY) + 100,
+		principal_private_pages = u64(PRIVATE_CACHE_CAPACITY) + 100,
+	})
+	for i in 0 ..< PRIVATE_CACHE_CAPACITY {
+		_, r := insert_private(&slot_cache, 2, 2, test_hash(u8(i & 0xFF), u8(i >> 8)), u64(2000 + i), 100, 1)
+		testing.expect_value(t, r, Insert_Result.Inserted)
+	}
+	testing.expect_value(t, private_admit_need(&slot_cache, 1, 1), Private_Admit_Need.Need_Global_Or_Slot)
+}

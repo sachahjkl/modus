@@ -12,7 +12,7 @@ This file records the one form: **an object is read through the storage service,
 
 Today the word "resource" names three things with no common call:
 
-- **A file of the boot image that the root service maps into one process.** The root service finds it by name, maps its pages read-only, and writes its address and its size into two numbered context values that the receiver knows by heart. Example: the compositor reads its pointer theme at context values 6 and 7 (`src/modules/system/compositor/pointer_picture.odin`, `src/modules/system/root/resources.odin`).
+- **A file of the boot image that the root service maps into one process.** The root service finds it by name, maps its pages read-only, and writes its address and its size into two numbered context values that the receiver knows by heart. Example: the compositor previously read its pointer theme at context values 6 and 7 (`src/modules/system/compositor/pointer_picture.odin`).
 - **A file at a fixed address range in each process.** The font outlines and the script font set. The root service checks each one and maps it at a fixed range of the process, outside any call ([script_fonts.md](script_fonts.md), [glyphs_on_demand.md](glyphs_on_demand.md)).
 - **A search of the whole image** by a process with the grant `Image` (`system.image_resource_find`).
 
@@ -154,7 +154,7 @@ Plain expressions for frequent tasks ([`docs/PROPERTIES.md`](../../../docs/PROPE
 ## What the form replaces
 
 - The numbered context values of each resource (for example the pointer theme values).
-- `resource_mapping` and `pointer_theme_choice` in the root service (`src/modules/system/root/resources.odin`).
+- `resource_mapping` and `pointer_theme_choice` in the root service (removed).
 - The fixed address ranges as a delivery mechanism for font outlines and the script font set. A process can still map an object at a chosen address; that address is its own choice, not a contract of the root service.
 - The grant `Image` and `system.image_resources`, `system.image_resource_find` for data. The loader of the storage chain keeps direct reads of modules.
 - The read of the script font set by the root service through `disk_processes`: the set is an object of a tree, read through storage like every other object.
@@ -206,9 +206,11 @@ Built:
 - Storage read-only object wire contract (`Map_Object_Request`, `Map_Object_Answer`, bounded call-region `Ambiguity_Table`, `Pin_Request`, `Unpin_Request`, `List_Pins_Answer`) in `modus:contract/storage_object` (with host tests).
 - Early `storage_start` path in `root` (after `machine_parts_page_create` and before `start_policy_begin`, with no `Display` ring, no `text_settings_give`, `.Image` + `GRANT_VALUE_IMAGE_FILE_CHECK`, and optional `.Data_Disk` so diskless machines still serve the image tree), `start_grant.Grant.Read_Only_Trees`, `Service_Command.Tree_Grant`, and `storage` floor accounting in `tools/modustool/build/start_lists.odin`.
 - Decoupled `storage` startup (validates `IMGTREE1` before opening the data disk; serves image-tree calls when the disk is absent, unusable, or silent), live `map_object`, `pin_object`, `unpin_object`, and `list_pins` exports (copy-once read-only `Memory_Create` with `.Write`/`.Execute` stripped, lazy BLAKE3 verification under `Root_Service_At_Load`, `Principal_Locked`/`Principal_Reclaim` cache eviction and pin cleanup, and `collect_garbage`/`erase_versions` pin protection), and client wrappers in `modus:storage` (`objects.odin`).
-- First live consumer migration: `pointers` maps `pointer_themes/posy` and `pointer_themes/system` through `storage.map_object` using `Read_Only_Trees` and drops its `.Image` grant.
+- First live consumer migration: `pointers` maps `pointer_themes/posy` and `pointer_themes/system` through `storage.map_object` using `Read_Only_Trees`, closes its temporary storage connection (`storage.close`), and drops its `.Image` grant.
+- `manual` migration: `manual` maps `manual/pages` through `storage.map_object` using `Read_Only_Trees` (`manual`) and closes its temporary storage connection while keeping `.Image` solely for module export descriptions.
+- `compositor` pointer-theme migration and removal of the root resource-mapping path: `root` attaches `pointer_themes` to the display holder's storage connection, `compositor` maps `pointer_themes/posy` and `pointer_themes/system` at startup via `storage.map_object` (zero draw-frame blocking), and numbered pointer-theme context values (`6/7`, `18/19`), `resource_mapping`, `pointer_theme_choice`, and `Resource_Given` are removed.
+- Disk-backed `Private_Principal` object mapping wired into `storage.map_object`: resolves exact `/` paths in the caller's private store (and enforces cross-tree ambiguity when both an image tree and a private store match), caches verified read-only copies keyed by `(principal_id, store_index, hash)` with dedicated internal writable wipe handles for volatile-zeroing on `Principal_Locked`, `Principal_Reclaim`, store reclamation, and non-crashing `holdings == 1` eviction.
 
 Left:
 
-- Removing `resources.odin`, fixed-range delivery, and `Image` data lookups (`docs/ARCHITECTURE.md`, "U2b. Resources of the boot image"; [script_fonts.md](script_fonts.md); [glyphs_on_demand.md](glyphs_on_demand.md)).
-- Updating `compositor`, `unlock`, `manual`, `text_settings`, and remaining graphical clients to read objects through `storage`, and wiring disk-backed private objects into `map_object`'s `Private_Principal` pool.
+- Migrating `font_outlines` and `script_fonts` fixed-range delivery (`root/text_settings.odin`, `root/script_fonts.odin`, `display.text_settings_open`, `drawing`, `text_rendering_module`, `interface_module`) to `storage.map_object` once the pinned Odin fork updates `core:sys/modus` `CONTEXT_VALUE_STORAGE_FILE_SIZE` off slot `3` (which currently collides with `terminal` and `randomness` context values) and root-coordinated short-lived storage disconnect exists for processes without `Root_Ring`.

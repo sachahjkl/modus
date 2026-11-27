@@ -8,6 +8,7 @@ import "modus:graphics"
 import "modus:interface"
 import markdown "internal:manual/source_comment_markdown"
 import module "modus:contract/module"
+import "modus:storage"
 import "modus:system"
 
 // The text of a page: rows of parts. A part of a row is a run of text with
@@ -743,30 +744,44 @@ link_focus_move :: proc "contextless" (backward: bool) {
 	system.log_fact(.Info, Link_Focused{}, link.label, link.target)
 }
 
-// The link pages: the resource manual_pages of the boot image, validated
-// once at the start. With no valid resource, a link to a term or a guide
-// has no page.
+// The link pages: the object `manual/pages` mapped read-only from the storage
+// service and validated once at the start. With no valid object, a link to a
+// term or a guide has no page.
+link_pages_mapped: storage.Mapped_Object
 link_pages: manual_pages.Pages
 
-// link_pages_open finds the resource of the link pages, checks the hash of
-// its bytes against its entry and its format, and writes the result on
-// the log.
-link_pages_open :: proc "contextless" () {
-	entry := system.image_resource_find(image, manual_pages.RESOURCE_NAME)
-	if entry == nil {
+// link_pages_open opens the storage connection granted for the `manual` tree,
+// maps `manual/pages` read-only, closes the temporary storage connection while
+// keeping the read-only memory mapping alive, verifies the BLAKE3 hash and
+// format, and writes the result on the log.
+link_pages_open :: proc "contextless" (ctx: ^system.Context) {
+	store_client, store_ok := storage.open(ctx)
+	if !store_ok {
 		system.log_fact(.Info, No_Link_Pages{})
 		return
 	}
-	bytes := image[entry.offset:][:entry.size]
-	if blake3.hash(bytes) != entry.hash {
+	defer storage.close(&store_client)
+	mapped, answer, map_status, _ := storage.map_object(&store_client, "manual/pages")
+	if map_status != .Ok {
+		if answer.result == .Damaged {
+			system.log_fact(.Warning, Link_Pages_Hash_Wrong{})
+		} else {
+			system.log_fact(.Info, No_Link_Pages{})
+		}
+		return
+	}
+	if blake3.hash(mapped.bytes) != mapped.hash {
+		storage.mapped_object_close(&mapped)
 		system.log_fact(.Warning, Link_Pages_Hash_Wrong{})
 		return
 	}
-	pages, problem := manual_pages.validate(bytes)
+	pages, problem := manual_pages.validate(mapped.bytes)
 	if problem != .None {
+		storage.mapped_object_close(&mapped)
 		system.log_fact(.Warning, Link_Pages_Refused{rule = u64(problem)})
 		return
 	}
+	link_pages_mapped = mapped
 	link_pages = pages
 	system.log_fact(.Info, Link_Pages_Read{pages = u64(pages.count)})
 }

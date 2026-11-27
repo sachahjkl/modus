@@ -135,6 +135,31 @@ open_of_handles :: proc "contextless" (ring_memory, region_memory, service: syst
 	return client, true
 }
 
+// close unmaps the call ring and call region of client and closes its local
+// connection handles. Any Mapped_Object handles returned earlier by map_object
+// stay mapped and valid until mapped_object_close is called on them.
+close :: proc "contextless" (client: ^Client) {
+	if client == nil {
+		return
+	}
+	if client.calls.head != nil {
+		system.ring_close(&client.calls)
+	}
+	if raw_data(client.region) != nil {
+		system.memory_unmap(raw_data(client.region))
+	}
+	if client.ring_memory != 0 {
+		system.close(client.ring_memory)
+	}
+	if client.region_memory != 0 {
+		system.close(client.region_memory)
+	}
+	if client.service != 0 {
+		system.close(client.service)
+	}
+	client^ = {}
+}
+
 // connected says if the connection is still there. The kernel ends the
 // handles of the connection at a revocation: the process learns it here,
 // before it uses the memory.

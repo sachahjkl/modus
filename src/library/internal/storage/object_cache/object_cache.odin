@@ -36,8 +36,10 @@ PAGE_SIZE :: u64(4096)
 PUBLIC_CACHE_CAPACITY :: 128
 
 // Plan value: slot capacity for Private_Principal read-only cached objects
-// across all active principals.
-PRIVATE_CACHE_CAPACITY :: 512
+// across all active principals. Each entry retains two kernel handles (its
+// stripped read-only handle and its internal writable wipe handle), so 256
+// slots cap private handle consumption at 512, well within HANDLE_TABLE_CAPACITY.
+PRIVATE_CACHE_CAPACITY :: 256
 
 // Plan value: slot capacity for durable pins across all principals.
 PIN_CAPACITY :: 512
@@ -92,6 +94,17 @@ Insert_Result :: enum u8 {
 	Quota_Exceeded   = 2,
 	Table_Full       = 3,
 	Invalid_Argument = 4,
+}
+
+// Closed set of admission requirements before allocating or reading a
+// Private_Principal object from disk. Separates per-principal quota pressure
+// (which may evict only Same_Principal) from global private ceiling or table
+// pressure (which may evict Any_Private once principal quota fits).
+Private_Admit_Need :: enum u8 {
+	Ready                = 0,
+	Need_Principal_Pages = 1,
+	Need_Global_Or_Slot  = 2,
+	Impossible           = 3,
 }
 
 // Closed set of outcomes from selecting a non-crashing eviction candidate.
@@ -245,6 +258,24 @@ principal_private_pages_used :: proc "contextless" (cache: ^Cache, principal_id:
 		}
 	}
 	return total
+}
+
+// private_admit_need reports whether a Private_Principal object of pages fits
+// immediately, requires Same_Principal eviction for per-principal quota, or
+// requires Same_Principal/Any_Private eviction for global ceiling or table
+// capacity.
+private_admit_need :: proc "contextless" (cache: ^Cache, principal_id: u64, pages: u64) -> Private_Admit_Need {
+	if cache == nil || pages == 0 || pages > cache.config.principal_private_pages || pages > cache.config.global_private_pages {
+		return .Impossible
+	}
+	principal_used := principal_private_pages_used(cache, principal_id)
+	if principal_used > cache.config.principal_private_pages - pages {
+		return .Need_Principal_Pages
+	}
+	if cache.private_pages_used > cache.config.global_private_pages - pages || cache.private_count >= PRIVATE_CACHE_CAPACITY {
+		return .Need_Global_Or_Slot
+	}
+	return .Ready
 }
 
 // lookup_public finds a cached Public_System entry by hash and updates its LRU

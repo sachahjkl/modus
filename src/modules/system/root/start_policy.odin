@@ -171,13 +171,17 @@ start_policy_pages_give :: proc "contextless" (work: ^Start_Work) {
 	if machine_parts_memory == 0 {
 		return
 	}
-	list_mapping, list_size, given := resource_mapping(START_POLICY_LIST_NAMES[start_policy_list], start_list.START_LIST_ADDRESS, work.name)
+	list_entry := system.image_resource_find(image, START_POLICY_LIST_NAMES[start_policy_list])
+	if list_entry == nil {
+		return
+	}
+	list_mapping, given := image_entry_mapping(list_entry, start_list.START_LIST_ADDRESS)
 	if !given {
 		return
 	}
 	start_mapping_add(work, "the machine parts page", {memory = machine_parts_memory, address = start_list.MACHINE_PARTS_PAGE_ADDRESS, first = 0, page_count = 1})
 	start_mapping_add(work, "the start list", list_mapping)
-	system.value_put(&work.values, start_list.VALUE_LIST_SIZE, list_size)
+	system.value_put(&work.values, start_list.VALUE_LIST_SIZE, list_entry.size)
 	system.range_mapped_put(&work.values, .Start_Policy_Pages)
 }
 

@@ -195,6 +195,7 @@ caller_of :: proc "contextless" (caller: ^Caller) {
 		return
 	}
 	caller.store = {name = store.name, limit = store.limit, share_limit = item.block_limit}
+	caller.principal = owned_slot(store.name)
 	caller.read_only = item.read_only
 	caller.depth = item.depth
 	copy(caller.path[:item.depth], item.path[:item.depth])

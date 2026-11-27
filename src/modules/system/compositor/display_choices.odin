@@ -37,14 +37,13 @@ display_plan: plan_values.Owner_Values
 // The copy of the plan values page that display_plan points into.
 display_plan_copy: system.Plan_Values_Copy
 
-// display_choices_open opens the role store from the context and starts
-// the worker, with no call to the storage service: the read waits for the
-// first frame.
-display_choices_open :: proc "contextless" (ctx: ^system.Context) {
+// display_choices_open takes ownership of the role store opened at startup
+// and starts the worker, with no call to the storage service: the read waits
+// for the first frame.
+display_choices_open :: proc "contextless" (ctx: ^system.Context, role_store: storage.Client, role_store_open: bool) {
 	// The defaults of the plan hold from the first frame, before the read
 	// of the store.
 	display_plan, _ = system.plan_values_of_process(&ctx.values, &display_plan_copy)
-	role_store, role_store_open := storage.open_of_handles(ctx.handles[system.GRANT_STORAGE_RING], ctx.handles[system.GRANT_STORAGE_REGION], ctx.handles[system.GRANT_STORAGE_SERVICE], ctx.values[VALUE_STORAGE_FILE_SIZE])
 	if !kept_choices.kept_open(&display_kept, role_store, role_store_open, display_choices.KEPT_OBJECT_NAME) {
 		system.log_fact(.Warning, Display_Choices_No_Store{})
 	}

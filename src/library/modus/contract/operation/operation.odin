@@ -4064,17 +4064,8 @@ seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Stren
 // other start of `settings` has 0 and opens its window. No other process
 // reads this value.
 CONTEXT_VALUE_SETTINGS_PASS :: 17
-// The values 18 and 19: the address and the size of the second pointer
-// theme file that the root service gives the compositor (the theme of the
-// system, beside the theme of the owner at the values 6 and 7 of the
-// compositor). The setting "pointer_theme" chooses between the two.
-//
-// The value 18 is the address where the root service mapped the file,
-// read-only, in the compositor; 0 when it mapped none.
-CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS :: 18
-// The value 19: the size in bytes of the second pointer theme file at the
-// address of the value 18. The compositor reads no byte past it.
-CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
+// The values 18 and 19 have no role: pointer themes reach the compositor
+// through storage.map_object instead of numbered context values.
 // The value 20: a set of bits, bit n for the member n of the fixed ranges
 // (modus:contract/fixed_addresses, Fixed_Range): the ranges that the starter
 // mapped for this process. A set bit is the statement of the starter that

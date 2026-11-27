@@ -61,10 +61,11 @@
 // registers of the VGA, for the [page flip](term:page-flip); the values 0
 // to 3 are the width, the height, the pixels of a line and the pixel format
 // of the screen. The root service also maps its own file (for its exports),
-// two [pointer themes](term:pointer-theme), the
-// [settings page](term:settings-page), the font outlines and the
-// [date page](term:date-page). Its row of `start_grant_sets` has the grants
-// Serve and System_Part: the root service gives these handles by name.
+// the [settings page](term:settings-page), the font outlines and the
+// [date page](term:date-page), and connects it to the storage service for its
+// role store and the read-only `pointer_themes` tree. Its row of
+// `start_grant_sets` has the grants Serve and System_Part: the root service
+// gives these handles by name.
 //
 // **Its exports**: `pointer` and `windows`, to a caller that
 // [acts for the principal](term:acts-for-the-principal) (`exports.odin`).
@@ -110,6 +111,7 @@ import "modus:contract/ring"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:key_path"
+import "modus:storage"
 import "modus:system"
 import "modus:contract/pointer_pictures"
 import "modus:contract/virtio_input"
@@ -831,7 +833,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
 	date_page = date.page_of(ctx)
-	display_choices_open(ctx) // display_choices.odin: the role store; its read waits for the first frame.
+	// Map both pointer theme objects from the granted `pointer_themes` tree
+	// before handing the storage connection to the display choices worker.
+	role_store, role_store_open := storage.open_of_handles(ctx.handles[system.GRANT_STORAGE_RING], ctx.handles[system.GRANT_STORAGE_REGION], ctx.handles[system.GRANT_STORAGE_SERVICE], ctx.values[VALUE_STORAGE_FILE_SIZE])
+	pointer_theme_load(&role_store, role_store_open) // pointer_picture.odin
+	display_choices_open(ctx, role_store, role_store_open) // display_choices.odin: the role store; its read waits for the first frame.
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
 	input_status, control_status: call_outcome.Call_Outcome
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
@@ -896,7 +902,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	background_build()
 	pointer_x, pointer_y = desktop_width / 2, desktop_height / 2
 	bar_mark_build()
-	pointer_theme_open(ctx) // pointer_picture.odin
+	pointer_theme_open() // pointer_picture.odin
 	damage_whole_screen()
 	full_measure = true
 	system.log_fact(.Info, Compositor_Ready{width = u64(width), height = u64(height)})

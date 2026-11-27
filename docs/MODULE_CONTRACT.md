@@ -1645,7 +1645,7 @@ The values that the system names:
 | 14, 15 | No role. A new role of the system never takes these numbers | |
 | 16 | The strength of the seed: a member of `Seed_Strength` | `CONTEXT_VALUE_SEED_STRENGTH` |
 | 17 | The pass that the process `settings` runs with no window: `settings.Pass`, the boot (1) or the next appearance of the Control Center (2) | `CONTEXT_VALUE_SETTINGS_PASS` |
-| 18, 19 | The address and the size of the second pointer theme file of the compositor | `CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS`, `CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE` |
+| 18, 19 | No role. Pointer themes reach the compositor through `storage.map_object` | |
 | 20 | A set of bits: the fixed ranges that the starter mapped for this process | `CONTEXT_VALUE_FIXED_RANGES_MAPPED` |
 | 21 | The size in bytes of the debug image, when its fixed range is mapped | `CONTEXT_VALUE_DEBUG_IMAGE_SIZE` |
 | 22 | The machine runs for a measure (1) | `CONTEXT_VALUE_MEASURE_RUN` |
@@ -1687,7 +1687,7 @@ Facts of the record:
 - **A call host**: the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
 - **A process that starts with an all-zero context has no handles.** It can compute and stop. It can reach nothing (P2).
 - **A value is a statement of the starter.** Only the starter writes the context, so a process can trust a value of it more than a field of a page that another process can write. That is why the set of the mapped fixed ranges is a value of the context.
-- **Example**: the root service gives `compositor` the size and the format of the screen in the values 0 to 3, the address and the size of its own file in 4 and 5, and the two pointer theme files as an address and a size each, in the values 6 and 7, then 18 and 19 (`src/modules/system/root/main.odin`; the order of the two themes is `pointer_theme_choice` in `src/modules/system/root/resources.odin`).
+- **Example**: the root service gives `compositor` the size and the format of the screen in the values 0 to 3, the address and the size of its own file in 4 and 5, and the size of the storage service file in value 8 (`src/modules/system/root/main.odin`). Pointer themes are mapped read-only from the storage service through `storage.map_object` (`src/modules/system/compositor/pointer_picture.odin`).
 - **Prior art**: The `processargs` message of Fuchsia has a fixed header, offsets, and one typed entry per handle. It still carries `argv` and environment strings; this design does not. [Load §6]
 
 **What the context is not.** It is not a channel: the starter writes it once, before the first thread runs, and nothing arrives through it later. A process that needs more after its start asks through a ring that one of its handles names.

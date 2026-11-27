@@ -62,12 +62,13 @@ text_settings_create :: proc "contextless" () {
 	// never writes the page again.
 	settings.page_defaults_write((^settings.Page)(address))
 	system.memory_unmap(address)
-	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
-		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
-		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size], font_records_room[:]); problem.kind == .None {
-			font_outlines_mapping = mapping
-		} else {
-			system.log_fact(.Warning, Font_Outlines_Refused{problem_value = problem.value, problem = text_field(font_outlines.problem_sentences[problem.kind], 80)})
+	if entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME); entry != nil {
+		if mapping, given := image_entry_mapping(entry, font_outlines.ADDRESS); given {
+			if _, problem := font_outlines.validate(image[entry.offset:][:entry.size], font_records_room[:]); problem.kind == .None {
+				font_outlines_mapping = mapping
+			} else {
+				system.log_fact(.Warning, Font_Outlines_Refused{problem_value = problem.value, problem = text_field(font_outlines.problem_sentences[problem.kind], 80)})
+			}
 		}
 	}
 	if font_outlines_mapping.page_count == 0 {

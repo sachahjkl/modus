@@ -56,6 +56,8 @@
 //   place of an import.
 // - **Inspect**: it reads the module records of each process that runs. It gives these facts only to a caller
 //   that acts for the principal (information.odin).
+// - **Read_Only_Trees** (`manual`): it maps the link pages object `manual/pages` read-only through the storage
+//   service and closes the temporary storage connection after startup.
 //
 // **What it proves**: the documentation of a module is in its file, and a reader needs neither its source nor a
 // load of it. It does not prove that a text is true: the build copies the comments, and checks only their form.
@@ -985,9 +987,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Succeeded {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
-	// Before the first page: its links to terms and guides read the
-	// resource.
-	link_pages_open()
+	// Before the first page: its links to terms and guides read `manual/pages`
+	// from the storage service.
+	link_pages_open(ctx)
 	information_start(ctx)
 	list_build()
 	entries := system.image_entries(image)

@@ -405,15 +405,6 @@ Store_Name_Too_Long :: struct {
 	caller:    value_kinds.Module_Name_Field,
 }
 
-// A resource of the boot image given read-only, after its bytes agreed with
-// its entry.
-@(log_fact = "root: the resource {resource} ({resource_size}) is given to {receiver}, read-only")
-Resource_Given :: struct {
-	resource_size: value_kinds.Size_In_Bytes,
-	resource:      [32]u8,
-	receiver:      value_kinds.Module_Name_Field,
-}
-
 // A replacement of a module refused, with the sentence of its cause: a
 // closed set of sentences of the replacement list and of its signature.
 @(log_fact = "root: refused the replacement of {replaced} by {replacement}: {reason}")

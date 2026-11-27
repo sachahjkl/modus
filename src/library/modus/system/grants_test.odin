@@ -249,6 +249,7 @@ a_start_grant_set_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		{.Connect, .Network, .Acts_For_Principal, .Remote_Clients},
 		{.Data_Disk, .Scratch_Disk, .Network_Device},
 		{.Serve, .Image, .Data_Disk},
+		{.Serve, .Image, .Replacements, .Inspect, .Read_Only_Trees},
 		{.Read_Only_Trees},
 		{.Store, .Read_Only_Trees},
 		{},

@@ -271,9 +271,10 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// only the processes that it asked for (src/md/features/start_policy.md).
 	// This service starts it, and refuses a Start of its name.
 	{name = "start_policy", scope = .Machine, grants = {.Start_Policy}},
-	// It reads the documentation of each module of the boot image, and the
-	// module records of each process.
-	{name = "manual", scope = .Session, grants = {.Serve, .Image, .Replacements, .Inspect}},
+	// It reads the documentation of each module of the boot image, the
+	// module records of each process, and its link pages from the read-only
+	// `manual` image subtree through the storage service.
+	{name = "manual", scope = .Session, grants = {.Serve, .Image, .Replacements, .Inspect, .Read_Only_Trees}, terms = {read_only_trees = {0 = "manual"}}},
 	// It measures the block service on the disk of the measures, which
 	// holds no data of a process: its writes destroy nothing.
 	{name = "disk", scope = .Session, grants = {.Scratch_Disk}},

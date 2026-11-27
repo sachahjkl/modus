@@ -119,7 +119,6 @@ import "modus:system"
 import terminal "modus:terminal"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
-import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import "modus:contract/input_context"
 import "modus:contract/log_scope"
@@ -173,18 +172,10 @@ COMPOSITOR_VALUE_FORMAT :: 3
 // The values of the context of the compositor that name its own file.
 COMPOSITOR_VALUE_FILE_ADDRESS :: 4
 COMPOSITOR_VALUE_FILE_SIZE :: 5
-// The pointer theme file of the compositor (docs/POINTERS.md): a resource
-// of the boot image, mapped read-only (resources.odin).
-COMPOSITOR_VALUE_POINTER_THEME_ADDRESS :: 6
-COMPOSITOR_VALUE_POINTER_THEME_SIZE :: 7
 // The size of the file of the storage service, which the compositor maps
-// for its role store: the usual place of it is a value of its screen.
+// for its role store and read-only pointer themes: the usual place of it is
+// a value of its screen.
 COMPOSITOR_VALUE_STORAGE_FILE_SIZE :: 8
-POINTER_THEME_ADDRESS :: fixed_addresses.POINTER_THEMES_ADDRESS
-// The values of the context of the compositor for each pointer theme: the
-// second at the values that modus:contract/operation names for it.
-COMPOSITOR_POINTER_THEME_VALUES := [2][2]int{{COMPOSITOR_VALUE_POINTER_THEME_ADDRESS, COMPOSITOR_VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
-POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is this far after the first.
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
 // The storage service: the private store of the caller, with the limit of
@@ -248,8 +239,8 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		amount: u64
 		// The holder of Display is a System_Part and receives its role store
 		// directly through display_role_store_give without carrying .Store in
-		// its start grant set.
-		if (.Store in start_grant_set.grants && .Store not_in caller.revoked) || is_role_holder(system.name_of(caller.name[:]), .Display) {
+		// its start grant set, only when a data disk exists.
+		if (.Store in start_grant_set.grants && .Store not_in caller.revoked) || (is_role_holder(system.name_of(caller.name[:]), .Display) && .Data_Disk in machine_parts) {
 			amount = store_blocks_planned(role_policy.store_name_of_module(&role_holder_names, system.name_of(caller.name[:])), start_grant_set)
 		}
 		grant := isolated.caller_grant_make(amount, caller.principal, acts)
@@ -1173,8 +1164,9 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> ca
 	// The compositor is also a service (src/modules/system/compositor/exports.odin):
 	// a service ring and its own file, as start() gives to a service. Its
 	// values 0 to 3 are the screen, so the file is at values 4 and 5.
-	// The file, two pointer themes, the settings page, the font outlines,
-	// the date page, the fresh bytes page, and one place more.
+	// The file, the settings page, the font outlines, the script font set,
+	// the date page, the fresh bytes page, the storage file, and the plan
+	// values page.
 	mappings: [9]system.Mapping
 	mapping_count := 0
 	for &item in system.image_entries(image) {
@@ -1196,20 +1188,6 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> ca
 			mappings[0] = file_mapping
 			mapping_count = 1
 			served.hash = item.hash
-		}
-	}
-	// The pointer themes: resources of the boot image, read-only, each at
-	// its place in the list of pointer_theme_choice (the values 6 and 7,
-	// then the two values of modus:contract/operation). The setting
-	// "pointer_theme" chooses one in the compositor.
-	for name, index in pointer_theme_choice() {
-		address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING
-		if mapping, size, given := resource_mapping(name, address, display_name); given {
-			places := COMPOSITOR_POINTER_THEME_VALUES[index]
-			system.value_put(&values, places[0], address)
-			system.value_put(&values, places[1], size)
-			mappings[mapping_count] = mapping
-			mapping_count += 1
 		}
 	}
 	text_settings_give(mappings[:], &mapping_count, &values, .Machine)
@@ -2386,6 +2364,36 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	return .Succeeded
 }
 
+// connection_read_only_trees collects the read-only image-tree subtrees that
+// root attaches to caller's storage connection via Service_Command.Tree_Grant.
+// The holder of Display receives `pointer_themes` regardless of which module
+// fills the role.
+connection_read_only_trees :: proc "contextless" (caller: ^Started, out: ^[READ_ONLY_TREE_LIMIT]string) -> []string {
+	count := 0
+	if .Read_Only_Trees in caller.start_grant_set.grants {
+		for tree_path in caller.start_grant_set.read_only_trees {
+			if len(tree_path) > 0 && count < len(out) {
+				out[count] = tree_path
+				count += 1
+			}
+		}
+	}
+	if is_role_holder(system.name_of(caller.name[:]), .Display) {
+		has_pointer_themes := false
+		for i in 0 ..< count {
+			if out[i] == "pointer_themes" {
+				has_pointer_themes = true
+				break
+			}
+		}
+		if !has_pointer_themes && count < len(out) {
+			out[count] = "pointer_themes"
+			count += 1
+		}
+	}
+	return out[:count]
+}
+
 // connection_open makes the service side of a connection from a caller to
 // the service with a name, and starts the service if it starts on demand.
 // It gives the call ring and the call region: give them to the caller,
@@ -2457,14 +2465,12 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, i64(count), isolated.SERVICE_CONNECTION_CAPACITY)
 	}
 	is_storage_service := is_role_holder(system.name_of(service.name[:]), .Storage)
-	tree_grant_count := 0
-	if is_storage_service && !caller.from_disk && !history && client.place == 0 && store_override == "" && .Read_Only_Trees in caller.start_grant_set.grants {
-		for tree_path in caller.start_grant_set.read_only_trees {
-			if len(tree_path) > 0 {
-				tree_grant_count += 1
-			}
-		}
+	tree_grants_buf: [READ_ONLY_TREE_LIMIT]string
+	tree_grants: []string
+	if is_storage_service && !caller.from_disk && !history && client.place == 0 && store_override == "" {
+		tree_grants = connection_read_only_trees(caller, &tree_grants_buf)
 	}
+	tree_grant_count := len(tree_grants)
 	// The service ring keeps room for one Disconnect for each connection, plus
 	// Connect and any connection-level read-only tree grants: this service
 	// never waits for a service that does not read its ring.
@@ -2564,11 +2570,8 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		system.close(region_memory)
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
 	}
-	if tree_grant_count > 0 {
-		for tree_path in caller.start_grant_set.read_only_trees {
-			if len(tree_path) == 0 {
-				continue
-			}
+	if len(tree_grants) > 0 {
+		for tree_path in tree_grants {
 			if packed, pack_ok := isolated.tree_grant_pack(tree_path); pack_ok {
 				_ = system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Tree_Grant), values = {0 = u64(in_service_ring), 1 = packed[0], 2 = packed[1], 3 = packed[2], 4 = packed[3], 5 = packed[4], 6 = packed[5]}})
 			}
