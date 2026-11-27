@@ -6,6 +6,21 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.110.0] - 2026-11-27 00:01
+
+### Added
+
+- **A multi-principal machine test of the end of a wide grant by a lock.** The `wide_grant` test part now runs a second machine with named principal 1 `alice` whose session locks from principal 0's boot console without stopping that console, verifying `Session_Locked` revocation, `Revoked` disconnect of both `remote` and `remote_display`, deferred storage key erasure until the collector persists the end record and stops, and encrypted audit chain verification after unlock.
+
+### Changed
+
+- **Wire QMP boot snapshots and the 10-shard `main` split into `flake.nix`.** The flake builds a cached QMP usable-boot VM snapshot through `modustool boot-snapshot` and runs the `main` machine scenario as 10 parallel `main_*` shard derivations that restore from that snapshot.
+- **Compositor pointer themes and manual link pages served through storage.** The compositor maps pointer themes and the manual maps link pages read-only through `storage.map_object`, replacing root resource mapping and numbered pointer-theme context values. `storage.map_object` also maps private disk-store objects with per-principal cache isolation and page zeroing on lock or reclaim.
+
+### Fixed
+
+- **Fix settings window launch raising when started on a fresh process slot.** The root service now matches both kernel process slot and serial when identifying a running settings pass, so opening `settings` a second time raises the running window instead of waiting forever for the finished boot pass.
+
 ## [0.109.0] - 2026-11-26 21:42
 
 ### Added
@@ -2089,6 +2104,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.110.0]: https://github.com/sachahjkl/modus/releases/tag/v0.110.0
 [0.109.0]: https://github.com/sachahjkl/modus/releases/tag/v0.109.0
 [0.108.0]: https://github.com/sachahjkl/modus/releases/tag/v0.108.0
 [0.107.0]: https://github.com/sachahjkl/modus/releases/tag/v0.107.0
