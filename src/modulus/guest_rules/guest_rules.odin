@@ -397,17 +397,16 @@ switch_counts :: proc "contextless" (information_1: u64, exit_event: u64) -> boo
 // The facts of a nested page fault of a guest that decide its answer
 // (guest_page_answer in the kernel reads them under the guest lock).
 Fault_Facts :: struct {
-	mapped:      bool, // A mapping of the guest process covers the address.
-	switching:   bool, // The mapping was made with Write, Execute and No_Access.
-	large:       bool, // The mapping uses large pages.
-	has_access:  bool, // The protection of the whole mapping is not No_Access.
+	mapped:         bool, // A mapping of the guest process covers the address.
+	switching:      bool, // The mapping was made with Write, Execute and No_Access.
+	has_access:     bool, // The protection of the whole mapping is not No_Access.
 	slot_no_access: bool, // The page has the mark No_Access in its slot.
-	committed:   bool, // The page is committed (an object made Uncommitted).
-	has_entry:   bool, // The page table holds the entry of the page.
-	present:     bool, // The entry is present.
-	allows:      bool, // The present entry already allows the access of the fault.
-	write:       bool, // The fault is a write.
-	execute:     bool, // The fault is a fetch.
+	committed:      bool, // The page is committed (an object made Uncommitted).
+	has_entry:      bool, // The page table holds a 4 KiB entry of the page.
+	present:        bool, // The entry is present.
+	allows:         bool, // The present entry already allows the access of the fault.
+	write:          bool, // The fault is a write.
+	execute:        bool, // The fault is a fetch.
 }
 
 // What the kernel does at a nested page fault.
@@ -428,7 +427,7 @@ fault_answer :: proc "contextless" (facts: Fault_Facts) -> Fault_Answer {
 		return .Refused
 	}
 	_, asks_one_access := switched_entry_bits(facts.write, facts.execute)
-	if !facts.switching || !asks_one_access || facts.large || !facts.has_access {
+	if !facts.switching || !asks_one_access || !facts.has_access {
 		return .Page_Give
 	}
 	if facts.slot_no_access || !facts.committed || !facts.has_entry {

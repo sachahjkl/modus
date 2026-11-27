@@ -432,10 +432,10 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 	target := &processes[target_index]
 	// A recorded or replayed process holds no large entry on any mapping
 	// (src/md/features/frames_of_a_process.md, "Subtle points"): demote
-	// every non-Large_Pages mapping with active 2 MiB or 1 GiB entries first.
+	// every mapping with active 2 MiB or 1 GiB entries first.
 	self := processor_self()
 	for &mapping in target.mappings {
-		if mapping.page_count != 0 && !mapping.large && (mapping.entries_2m != 0 || mapping.entries_1g != 0) {
+		if mapping.page_count != 0 && (mapping.entries_2m != 0 || mapping.entries_1g != 0) {
 			demote_mapping_range(target, &mapping, &regions[mapping.region], 0, mapping.page_count, self)
 		}
 	}
@@ -447,10 +447,10 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 		if !has_writer {
 			continue
 		}
-		// Refuse large, No_Access, or uncommitted shared read-only mappings so
+		// Refuse No_Access or uncommitted shared read-only mappings so
 		// point copies never expose protected or uncommitted pages.
 		region := &regions[mapping.region]
-		if mapping.large || mapping.bits & PAGE_PRESENT == 0 || region.uncommitted {
+		if mapping.bits & PAGE_PRESENT == 0 || region.uncommitted {
 			point_copies_teardown(target_index, rec)
 			return .Wrong_State
 		}
@@ -670,7 +670,7 @@ record_replay_map_check :: proc "contextless" (process_index: u32, region_index:
 
 // record_received_mapping_admit refuses, before any change, a mapping of
 // received memory that the record or its replay cannot hold: an access
-// that no stand-in mapping can have, an uncommitted or large-page object,
+// that no stand-in mapping can have, an uncommitted object,
 // more pages than one Shared_Mapping names, a stand-in mapping past the
 // capacity of a replay, or a second mapping of an object that the process
 // maps already: the replay gives each mapping its own stand-in memory, so
@@ -683,7 +683,7 @@ record_replay_map_check :: proc "contextless" (process_index: u32, region_index:
 record_received_mapping_admit :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags, first: u64, count: u64) -> Operation_Outcome {
 	rec := &process_records[process_index]
 	region := &regions[region_index]
-	if _, access_ok := input_history.shared_mapping_access_of_map_flags(flags); !access_ok || region.uncommitted || region.large_pages {
+	if _, access_ok := input_history.shared_mapping_access_of_map_flags(flags); !access_ok || region.uncommitted {
 		return .Wrong_State
 	}
 	count := count
@@ -1614,7 +1614,7 @@ replay_page_delta_apply_locked :: proc "contextless" (process_index: u32, payloa
 			// memory object, by its slot and its serial. An unmap removes it
 			// from the set (record_replay_on_unmap); the serial also keeps a
 			// slot that serves again from passing for it.
-			if mapping := mapping_at(&processes[process_index], delta_header.virtual_address); mapping != nil && mapping.region == stand_in.place && regions[mapping.region].serial == stand_in.place_serial && !mapping.large {
+			if mapping := mapping_at(&processes[process_index], delta_header.virtual_address); mapping != nil && mapping.region == stand_in.place && regions[mapping.region].serial == stand_in.place_serial {
 				target_frame = region_frame(&regions[stand_in.place], mapping.first + (delta_header.virtual_address - mapping.address) / PAGE_SIZE, true)
 			}
 		}
@@ -2223,7 +2223,7 @@ record_context_page_locked :: proc "contextless" (cpu: ^Processor, target_index:
 		}
 	}
 	mapping := mapping_at(&processes[target_index], op.CONTEXT_ADDRESS)
-	if mapping == nil || mapping.large {
+	if mapping == nil {
 		return true
 	}
 	region := &regions[mapping.region]
@@ -2322,7 +2322,7 @@ shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Pro
 // shared_writers_setup finds each page that the target maps with Write and
 // that another live process maps with Write too, keeps a baseline copy of
 // it paid by the budget of the history, records its first bytes, and makes
-// the gate of its writers. Large pages, uncommitted objects and pages with
+// the gate of its writers. Uncommitted objects, devices, and pages with
 // no access are refused: the copy of each entry must stay bounded and see
 // what the process sees. Caller holds Control and target's process lock.
 @(private = "file")
@@ -2333,7 +2333,7 @@ shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, 
 			continue
 		}
 		region := &regions[mapping.region]
-		if mapping.large || region.uncommitted || region.device {
+		if region.uncommitted || region.device {
 			return .Wrong_State
 		}
 		if rec.gate.state == .Inactive && !replay_filter.shared_writer_gate_init(&rec.gate, target_index, target.serial, SHARED_WRITER_WAIT_BOUND_MILLISECONDS) {
@@ -2810,7 +2810,7 @@ replay_context_page_clear_locked :: proc "contextless" (process_index: u32) {
 @(private = "file")
 replay_shared_page_frame_locked :: proc "contextless" (process_index: u32, virtual_address: u64) -> u64 {
 	mapping := mapping_at(&processes[process_index], virtual_address)
-	if mapping == nil || mapping.large || mapping.bits & PAGE_WRITE == 0 {
+	if mapping == nil || mapping.bits & PAGE_WRITE == 0 {
 		return 0
 	}
 	region := &regions[mapping.region]

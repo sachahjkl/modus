@@ -437,7 +437,7 @@ reads :: proc "contextless" (base: [^]u64) -> u64 {
 }
 
 large_pages :: proc "contextless" () {
-	memory, status := system.memory_create(LARGE_OBJECT_PAGES, flags = {.Large_Pages})
+	memory, status := system.memory_create(LARGE_OBJECT_PAGES, flags = {.Frames_Now})
 	if status != .Succeeded {
 		fail("the large pages: no object")
 		return
@@ -453,7 +453,8 @@ large_pages :: proc "contextless" () {
 	defer system.memory_unmap(small)
 	report := own_mappings()
 	large_mapping, small_mapping := mapping_at(report, LARGE_ADDRESS), mapping_at(report, SMALL_ADDRESS)
-	large_flags_right = large_mapping != nil && small_mapping != nil && .Large in large_mapping.flags && .Large not_in small_mapping.flags && large_mapping.present == LARGE_OBJECT_PAGES
+	expected_2m := u64(LARGE_OBJECT_PAGES / op.LARGE_PAGE_PAGES)
+	large_flags_right = large_mapping != nil && small_mapping != nil && .Large in large_mapping.flags && large_mapping.entries_2m == expected_2m && .Large not_in small_mapping.flags && small_mapping.entries_2m == 0 && small_mapping.entries_4k == LARGE_OBJECT_PAGES && large_mapping.present == LARGE_OBJECT_PAGES
 	if !large_flags_right {
 		fail("the large pages: the report")
 	}
@@ -494,8 +495,8 @@ refuse :: proc "contextless" () {
 	_, status = system.memory_protect(both[:], {.Write, .Execute}, &record)
 	refusal(&refusals[2], "write and execute", .Argument_Refused, status, record)
 	record = {}
-	_, status = system.memory_create(100, flags = {.Large_Pages}, error = &record)
-	refusal(&refusals[3], "large pages of 100 pages", .Argument_Refused, status, record)
+	_, status = system.memory_create(100, flags = {.Uncommitted, .Frames_Now}, error = &record)
+	refusal(&refusals[3], "uncommitted with frames now", .Argument_Refused, status, record)
 }
 
 // The edge cases of the virtual memory: each one is a case where the
@@ -563,8 +564,11 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 	// wake of the word at the same offset of the first 4 KiB wakes nobody,
 	// a wake of its own word wakes it.
 	{
-		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
+		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Frames_Now})
 		address, _ := system.memory_map(memory, {.Write}, 0, LARGE_ADDRESS)
+		report := own_mappings()
+		mapping := mapping_at(report, LARGE_ADDRESS)
+		large := mapping != nil && .Large in mapping.flags && mapping.entries_2m == 1
 		first := (^u32)(uintptr(address) + 128)
 		second := (^u32)(uintptr(address) + system.PAGE_SIZE + 128)
 		thread := waiter_start(second)
@@ -572,7 +576,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		intrinsics.atomic_add(second, 1)
 		woken := system.word_wake(second)
 		system.thread_wait(thread)
-		edge_case_results[5] = wrong == 0 && woken == 1
+		edge_case_results[5] = large && wrong == 0 && woken == 1
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -665,11 +669,11 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 	}
 	// An object of large pages at an address that the kernel chooses.
 	{
-		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
+		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Frames_Now})
 		address, status := system.memory_map(memory)
 		report := own_mappings()
 		mapping := mapping_at(report, u64(uintptr(address)))
-		edge_case_results[2] = status == .Succeeded && mapping != nil && .Large in mapping.flags
+		edge_case_results[2] = status == .Succeeded && mapping != nil && .Large in mapping.flags && mapping.entries_2m == 1
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -1381,15 +1385,15 @@ page_tables_return :: proc "contextless" () {
 		system.log_fact(.Info, Page_Tables_Of_Reservation{reservation_pages = u64(RESERVATION_PAGES), table_pages = u64(tables), pages_kept = u64(before.pages - after.pages), budget_after_decommit = value_kinds.text_field(decommitted.pages == mapped.pages ? "the same" : "not the same", 16), verdict = page_tables_verdict(right_case)})
 		page_tables_case_end(right_case)
 	}
-	// 3. A large page: two tables above it, both return.
+	// 3. A large page: two upper tables and one parked demotion table, all three return.
 	{
-		memory, created := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
+		memory, created := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Frames_Now})
 		before, _ := system.budget_read()
 		address, status := system.memory_map(memory, {.Write}, 0, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
 		mapped, _ := system.budget_read()
 		report := own_mappings()
 		mapping := mapping_at(report, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
-		large := mapping != nil && .Large in mapping.flags
+		large := mapping != nil && .Large in mapping.flags && mapping.entries_2m == 1
 		if status == .Succeeded {
 			intrinsics.volatile_store((^u64)(address), 1)
 			system.memory_unmap(address)
@@ -1397,7 +1401,7 @@ page_tables_return :: proc "contextless" () {
 		after, _ := system.budget_read()
 		system.close(memory)
 		tables := before.pages - mapped.pages
-		right_case := created == .Succeeded && status == .Succeeded && large && tables == 2 && after.pages == before.pages
+		right_case := created == .Succeeded && status == .Succeeded && large && tables == 3 && after.pages == before.pages
 		system.log_fact(.Info, Page_Tables_Of_Large_Page{table_pages = u64(tables), pages_kept = u64(before.pages - after.pages), verdict = page_tables_verdict(right_case)})
 		page_tables_case_end(right_case)
 	}

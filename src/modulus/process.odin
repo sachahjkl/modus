@@ -78,7 +78,6 @@ Region :: struct {
 	cache_mappings: page_attributes.Mapping_Cache_Counts, // With cache_types_counted: the live mappings of each cache type. Frame lock.
 	wx: memory_wx.Counts, // Live writable, executable, and switching mappings of this object across all processes. Frame lock.
 	uncommitted: bool, // Made Uncommitted: a page is paid when it is committed (the bit SLOT_COMMITTED of its slot).
-	large_pages: bool, // Made Large_Pages: contiguous, aligned on 2 MiB, a whole number of large pages.
 	zeroing_active: bool, // A thread holds a resumable 1 GiB Frames_Now continuation on this object. Region lock.
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
 	marked_pages: u64, // The pages whose slot has a mark of protection (Memory_Protect of a part). Region lock; read atomically.
@@ -185,8 +184,7 @@ Mapping :: struct {
 	entries_1g:         u64, // Present 1 GiB page table entries in this mapping.
 	// The protection that the handle permitted when the process mapped the
 	// object: Memory_Protect can give back what `bits` lost, never more.
-	limit_bits: u64,
-	large:           bool, // Each 2 MiB of the mapping is one large page (an object made Large_Pages).
+	limit_bits:      u64,
 	protected:       bool, // Memory_Protect changed the protection of pages of the mapping.
 	receive_handles: bool, // Memory_Map passed Map_Flag.Receive_Handles: this process agrees to receive handles through this memory.
 }
@@ -823,7 +821,7 @@ frame_take :: proc "contextless" () -> u64 {
 // budget_of_region, the budget of that memory object pays in place of
 // budget: it is read under the frame lock, where a release of a budget
 // gives its objects to the parent budget.
-region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false, budget_of_region: u32 = 0) -> (index: u32, status: Operation_Outcome) {
+region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, budget_of_region: u32 = 0) -> (index: u32, status: Operation_Outcome) {
 	if page_count == 0 || !contiguous && page_count > op.MEMORY_PAGE_LIMIT {
 		return 0, .Argument_Refused
 	}
@@ -848,14 +846,13 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		return 0, .Callee_Busy
 	}
 	region := &regions[index]
-	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial, uncommitted = uncommitted, large_pages = large_pages}
+	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial, uncommitted = uncommitted}
 	if contiguous {
-		alignment := large_pages ? u64(op.LARGE_PAGE_PAGES) : 1
-		region.physical = frames_take_aligned(page_count, alignment)
+		region.physical = frames_take(page_count)
 		if region.physical == 0 {
 			// Frames in the stacks of the processors can make the run.
 			caches_drain()
-			region.physical = frames_take_aligned(page_count, alignment)
+			region.physical = frames_take(page_count)
 		}
 		if region.physical == 0 {
 			region^ = {serial = region.serial}
@@ -1418,13 +1415,11 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	address := address
 	chosen := address == 0 && !at_zero
 	if chosen {
-		// Align chosen addresses for large-page mappings and non-contiguous
-		// mappings large enough to hold 1 GiB or 2 MiB runs; fall back to
-		// smaller alignment if no larger-aligned gap exists below MODULE_BASE.
+		// Align chosen addresses for non-contiguous mappings large enough to
+		// hold 1 GiB or 2 MiB runs; fall back to smaller alignment if no
+		// larger-aligned gap exists below MODULE_BASE.
 		alignment := u64(PAGE_SIZE)
-		if region.large_pages && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0 {
-			alignment = LARGE_PAGE_SIZE
-		} else if !region.contiguous && frame_runs_arch_enabled() {
+		if !region.contiguous && frame_runs_arch_enabled() {
 			if frame_runs_table.supports_1g && first % frame_runs.RUN_1G_PAGES == 0 && count >= frame_runs.RUN_1G_PAGES {
 				alignment = word_table.GIANT_PAGE_SIZE
 			} else if first % frame_runs.RUN_2M_PAGES == 0 && count >= frame_runs.RUN_2M_PAGES {
@@ -1435,7 +1430,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		if address == 0 && alignment == word_table.GIANT_PAGE_SIZE {
 			address = chosen_address(process, count, LARGE_PAGE_SIZE)
 		}
-		if address == 0 && alignment > PAGE_SIZE && !region.large_pages {
+		if address == 0 && alignment > PAGE_SIZE {
 			address = chosen_address(process, count, PAGE_SIZE)
 		}
 		if address == 0 {
@@ -1480,9 +1475,6 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// No_Access: the mapping has its addresses and no access until
 	// Memory_Protect gives it some.
 	bits := .No_Access in flags ? 0 : limit_bits
-	// Large pages: an object made Large_Pages, and a mapping whose address,
-	// first page and size are whole large pages.
-	large := region.large_pages && address % LARGE_PAGE_SIZE == 0 && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0
 	// One cache type over the memory of a device, across its memory objects
 	// (device_cache_type_claim), after each check of the arguments: a
 	// conflict is the last refusal of a map that is otherwise right. A map
@@ -1517,49 +1509,13 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	if !origin_attach(holding, origin) {
 		return 0, .Needs_Control
 	}
-	present_page_count: u64
-	entries_2m: u64
 	// The tables that a failed map emptied: freed after its shoot-down.
 	freed: Freed_Tables
-	if large {
-		for part in 0 ..< count / op.LARGE_PAGE_PAGES {
-			entry := page_directory_entry_hold(process.table, address + part * LARGE_PAGE_SIZE, &process.budget, &freed)
-			if entry == nil {
-				// The status before the free: the freed tables return pages
-				// to the budget.
-				refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .Budget_Or_Capacity_Exhausted : .Callee_Busy
-				self := processor_self()
-				for undo in 0 ..< part {
-					undo_address := address + undo * LARGE_PAGE_SIZE
-					undo_entry := page_directory_entry(process.table, undo_address)
-					if undo_entry == nil {
-						page_table_count_broken("a held entry has no table")
-					}
-					undo_entry^ = 0
-					if intrinsics.atomic_load(&self.table) == process.table {
-						page_flush(undo_address)
-					}
-					page_entries_release(process.table, undo_address, 2, 1, &freed)
-				}
-				intrinsics.atomic_thread_fence(.Seq_Cst)
-				processor_sync(processors_with_table(process.table))
-				page_tables_free(process.table, &process.budget, &freed)
-				origin_detach(holding)
-				return 0, refusal
-			}
-			frame := region.physical + (first + part * op.LARGE_PAGE_PAGES) * PAGE_SIZE
-			entry^ = bits == 0 ? 0 : frame | bits | PAGE_LARGE
-			if bits != 0 {
-				present_page_count += op.LARGE_PAGE_PAGES
-				entries_2m += 1
-			}
-		}
-	}
 	// Pass 1: hold every last-level page table across the mapping so that
 	// neither page faults nor demotions ever need to allocate a table frame.
 	// Entry installation runs only after all tables succeed, so an undo never
 	// has present or parked tables to unwind.
-	for page := u64(0); page < (large ? 0 : count); {
+	for page := u64(0); page < count; {
 		run_address := address + page * PAGE_SIZE
 		run := min(512 - (run_address >> 12 & 511), count - page)
 		run_first_entry := page_entry_hold(process.table, run_address, run, &process.budget, &freed)
@@ -1582,10 +1538,10 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// Under the process lock of the process: each caller of map_region holds
 	// it (Memory_Map through target_lock in enter.odin, process_create and
 	// thread_create in this file, the start of the root service in main.odin).
-	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, entries_2m = entries_2m, limit_bits = limit_bits, large = large, receive_handles = .Receive_Handles in flags}
+	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, limit_bits = limit_bits, receive_handles = .Receive_Handles in flags}
 	// Pass 2: install entries for pages that already have frames (4 KiB,
 	// 2 MiB, or 1 GiB). Skips the walk completely when region.present == 0.
-	if !large && bits != 0 && !writable_and_executable && (region.contiguous || intrinsics.atomic_load(&region.present) != 0) {
+	if bits != 0 && !writable_and_executable && (region.contiguous || intrinsics.atomic_load(&region.present) != 0) {
 		mapping_install_present_range(process, mapping, region, 0, count)
 	}
 	// A free mapping slot exists, so the order has room for its place.
@@ -1680,21 +1636,6 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	self := processor_self()
 	walked_present_pages: u64
 	freed: Freed_Tables
-	// A large page is one entry of the second level for 512 pages.
-	for part in 0 ..< (mapping.large ? mapping.page_count / op.LARGE_PAGE_PAGES : 0) {
-		address := mapping.address + part * LARGE_PAGE_SIZE
-		entry := page_directory_entry(process.table, address)
-		if entry == nil {
-			// The mapping holds its tables: a missing one is a wrong count.
-			page_table_count_broken("a held entry has no table")
-		}
-		walked_present_pages += (entry^ & PAGE_PRESENT) * op.LARGE_PAGE_PAGES
-		entry^ = 0
-		if self.table == process.table {
-			page_flush(address)
-		}
-		page_entries_release(process.table, address, 2, 1, &freed)
-	}
 	// One table of the last level at a time (one walk of the upper levels
 	// for 512 pages). Each page of the mapping is a held entry, present or
 	// not, so each table of the mapping loses its run of held entries with
@@ -1703,7 +1644,7 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	// the mapping (`present_page_count`): the tables of a mapping of 1 GiB
 	// with few pages that have a frame are not read entry by entry. The test
 	// build reads each entry, to compare the count with the walk.
-	for page := u64(0); page < (mapping.large ? 0 : mapping.page_count); {
+	for page := u64(0); page < mapping.page_count; {
 		address := mapping.address + page * PAGE_SIZE
 		// Check for a 1 GiB hardware large entry first.
 		if address % word_table.GIANT_PAGE_SIZE == 0 && mapping.page_count - page >= frame_runs.RUN_1G_PAGES {
@@ -1855,14 +1796,6 @@ page_give :: proc "contextless" (process: ^Process, address: u64, write: bool, e
 	mapping := mapping_at(process, address)
 	if mapping == nil {
 		return false
-	}
-	// Each page of a large mapping with access is present. A fault there
-	// that the entry permits now came through an old translation, before the
-	// shoot-down of a protection change: the instruction runs again
-	// with no stop of the process.
-	if mapping.large {
-		entry := page_directory_entry(process.table, address &~ u64(LARGE_PAGE_SIZE - 1))
-		return entry != nil && entry^ & PAGE_PRESENT != 0 && (!write || entry^ & PAGE_WRITE != 0) && (!execute || entry^ & PAGE_NO_EXECUTE == 0)
 	}
 	page := (address - mapping.address) / PAGE_SIZE
 	region := &regions[mapping.region]

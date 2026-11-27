@@ -54,8 +54,8 @@
         # branch is `odin-modus-target`; the commit is pinned.
         owner = "sachahjkl";
         repo = "Odin";
-        rev = "f756232d0a4ce93c5d550f48858d39ce4fbf9a93";
-        hash = "sha256-BXgtKInXplXvK/asvhi2SeL16GhiRWpnB2pzXzvexdg=";
+        rev = "746fb85303f7740eb4116af35a994712043fc0e1";
+        hash = "sha256-3a7GUKh1796AXH+Aw/VZg+CCZ1IflJW75VFe/LnyqS8=";
       };
       # No patch file: the changes are commits of the fork. The patches of
       # Nixpkgs are for raylib and for Darwin, which this system does not use.

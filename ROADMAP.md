@@ -10,7 +10,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Tier 2 seed-to-Odin guest bootstrap and `chibicc`-compiled C libraries.** Compile upstream `sqlite`, `lua`, and `zstd` using `chibicc` itself instead of host clang, and execute the full Tier 2 `hex0` → `M2-Planet` → `mes` → `tcc` → `gcc` → `LLVM 18` → `Odin` chain inside `guest_builder` from pinned upstream source archives to reproduce the host Odin compiler hash. [Design](src/md/features/bootstrap.md)
 - **The native viewer of the remote display.** A principal sees and drives the desktop of a machine from a program of its own on Linux, macOS and Windows that uses gui_toolkit, with the key that it allowed, in place of the peer of the tool. [Design](src/md/features/remote_display.md)
 - **The console line that never ran under a loaded host.** Once, in a full check on a loaded host, the console of the part `debugger` took the keys of a line and never ran it, while the machine stayed idle with a line of the serial port waiting; the part passes alone each time. The cause is found from the whole log of the next such failure, so a line that a principal types always runs.
-- **Remove `Large_Pages` after Odin fork sync.** Remove `Memory_Flag.Large_Pages` and migrate its remaining callers onto aligned `Frames_Now` runs alongside the pinned Odin fork ABI update. [Design](src/md/features/frames_of_a_process.md)
 
 ## Later
 

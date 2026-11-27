@@ -139,7 +139,7 @@ count_limit_holds :: proc "contextless" (operation: Operation, index: int, value
 		// A contiguous object has no frame list: its pages have no limit of
 		// the form, only what its budget pays.
 		flags := transmute(Memory_Flags)values[2]
-		return index != 1 || flags & {.Contiguous, .Large_Pages} == {}
+		return index != 1 || flags & {.Contiguous} == {}
 	case .Events_Set:
 		// With no memory the call takes the table away and reads no count.
 		return values[1] != 0

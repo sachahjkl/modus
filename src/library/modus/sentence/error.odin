@@ -509,7 +509,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_number(writer, u64(record.value))
 		write_part(writer, " with ")
 		write_part(writer, record.limit)
-		write_part(writer, " bytes, is a part of a mapping whose protection changes only whole (device memory, large pages), or of a thread area")
+		write_part(writer, " bytes, is a part of a mapping whose protection changes only whole (device memory, contiguous memory), or of a thread area")
 	case .Starter_Module:
 		subject(writer, record, argument)
 		write_part(writer, ", ")

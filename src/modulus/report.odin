@@ -149,7 +149,7 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 				item.flags += {.Execute}
 			}
 		}
-		if mapping.large {
+		if mapping.entries_2m != 0 || mapping.entries_1g != 0 {
 			item.flags += {.Large}
 		}
 		if mapping.protected {

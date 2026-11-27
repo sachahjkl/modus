@@ -95,9 +95,6 @@ the_pages_of_a_contiguous_object :: proc(t: ^testing.T) {
 	values[2] = transmute(u64)Memory_Flags{.Contiguous}
 	problem, _ = argument_value_problem(.Memory_Create, 1, values)
 	testing.expect_value(t, problem, errors.Kind.None)
-	values[2] = transmute(u64)Memory_Flags{.Large_Pages}
-	problem, _ = argument_value_problem(.Memory_Create, 1, values)
-	testing.expect_value(t, problem, errors.Kind.None)
 }
 
 // Events_Set with no memory takes the table away and reads no count.
@@ -116,12 +113,14 @@ the_counts_of_events_set :: proc(t: ^testing.T) {
 @(test)
 a_flag_outside_its_form :: proc(t: ^testing.T) {
 	known := OPERATIONS[.Memory_Create].parameters[2].limit
-	values := [7]u64{0, 1, (known + 1) << 4, 0, 0, 0, 0}
-	problem, limit := argument_value_problem(.Memory_Create, 2, values)
-	testing.expect_value(t, problem, errors.Kind.Bad_Flags)
-	testing.expect_value(t, limit, known)
-	values[2] = known
-	problem, _ = argument_value_problem(.Memory_Create, 2, values)
+	for bad in ([3]u64{u64(1) << (u64(max(Memory_Flag)) + 1), (known + 1) << 4, max(u64)}) {
+		values := [7]u64{0, 1, bad, 0, 0, 0, 0}
+		problem, limit := argument_value_problem(.Memory_Create, 2, values)
+		testing.expect_value(t, problem, errors.Kind.Bad_Flags)
+		testing.expect_value(t, limit, known)
+	}
+	values := [7]u64{0, 1, known, 0, 0, 0, 0}
+	problem, _ := argument_value_problem(.Memory_Create, 2, values)
 	testing.expect_value(t, problem, errors.Kind.None)
 	// The rights of Handle_Give: any set, the kernel keeps the rights that
 	// the handle has.

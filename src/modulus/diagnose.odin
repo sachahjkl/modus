@@ -964,12 +964,11 @@ read_pays_for :: proc "contextless" (budget: u32, region: u32) -> bool {
 
 // memory_create_cost gives the pages that a Memory_Create with these pages
 // and flags takes from its budget: the kinds of the object as execute reads
-// them from the flags (a Large_Pages object is contiguous), and the cost
-// that region_create charges for that kind.
+// them from the flags, and the cost that region_create charges for that kind.
 @(private = "file")
 memory_create_cost :: proc "contextless" (page_count: u64, flags_word: u64) -> u64 {
 	flags := transmute(op.Memory_Flags)flags_word
-	return region_create_cost(page_count, contiguous = .Contiguous in flags || .Large_Pages in flags, uncommitted = .Uncommitted in flags)
+	return region_create_cost(page_count, contiguous = .Contiguous in flags, uncommitted = .Uncommitted in flags)
 }
 
 // budget_explain gives what an operation asks of a budget, and what the
@@ -1593,9 +1592,6 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			return true
 		case .Uncommitted in flags && flags != {.Uncommitted}:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 1 << u64(op.Memory_Flag.Uncommitted), 0) // Uncommitted goes alone.
-			return true
-		case .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0:
-			record_set(record, .Not_Multiple, .Pages, 2, v[1], op.LARGE_PAGE_PAGES, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages of 512 pages.
 			return true
 		case v[1] == 0:
 			record_set(record, .Too_Small, .Pages, 2, 0, 1, 0)

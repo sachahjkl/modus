@@ -96,8 +96,8 @@ Page_Tables_Of_Reservation :: struct {
 	verdict:               [16]u8,
 }
 
-// A case of the page tables above a large page.
-@(log_fact = "address_space: page tables: a large page: {table_pages} pages of tables above it while mapped, {pages_kept} pages kept after the unmap: {verdict}")
+// A case of the page tables of a large page (upper tables plus parked demotion table).
+@(log_fact = "address_space: page tables: a large page: {table_pages} pages of tables while mapped, {pages_kept} pages kept after the unmap: {verdict}")
 Page_Tables_Of_Large_Page :: struct {
 	table_pages: u64,
 	pages_kept:  u64,

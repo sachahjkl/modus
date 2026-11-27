@@ -98,9 +98,9 @@ Do not use: TLB flush, TLB shootdown (for this).
 
 ### Large page
 
-A large page is a page of 2 MiB: one entry of the second level of a page table.
+A large page is a page of 2 MiB or 1 GiB: one entry of the second or third level of a page table.
 
-Only an object made with `Large_Pages` uses them: it is contiguous, aligned on 2 MiB, and a whole number of large pages. A mapping uses a large page for each 2 MiB that is aligned in it. One entry then covers 512 pages, so random reads over a large object miss the translation cache less.
+A commit or creation with `Frames_Now` over an aligned 2 MiB or 1 GiB range takes an aligned physical run when the budget run quota and free memory allow, with no page-size flag and no privilege. A mapping installs a large page entry for each aligned run whose address and offset match, and demotes it without allocating frames if a part changes protection or decommits. One entry then covers 512 or 262 144 pages, so random reads over a large object miss the translation cache less.
 
 The design: `docs/ARCHITECTURE.md`, "Large pages".
 

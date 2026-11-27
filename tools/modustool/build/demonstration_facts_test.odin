@@ -167,7 +167,7 @@ the_facts_of_address_space_write_the_lines_of_before :: proc(t: ^testing.T) {
 			for same in ([2]string{"the same", "not the same"}) {
 				facts_expect_line(t, render(t, file, "Page_Tables_Of_Reservation", {{"reservation_pages", count}, {"table_pages", other}, {"pages_kept", count}, {"budget_after_decommit", same}, {"verdict", verdict}}), line_of_before("address_space: page tables: ", "a reservation of ", count, " pages: ", other, " pages of tables, ", same, " after a commit and a decommit of 16 pages, ", count, " pages kept after the unmap", ": ", verdict))
 			}
-			facts_expect_line(t, render(t, file, "Page_Tables_Of_Large_Page", {{"table_pages", count}, {"pages_kept", other}, {"verdict", verdict}}), line_of_before("address_space: page tables: ", "a large page: ", count, " pages of tables above it while mapped, ", other, " pages kept after the unmap", ": ", verdict))
+			facts_expect_line(t, render(t, file, "Page_Tables_Of_Large_Page", {{"table_pages", count}, {"pages_kept", other}, {"verdict", verdict}}), line_of_before("address_space: page tables: ", "a large page: ", count, " pages of tables while mapped, ", other, " pages kept after the unmap", ": ", verdict))
 			for page in ([2]string{"stayed right", "changed"}) {
 				facts_expect_line(t, render(t, file, "Page_Tables_Beside_Neighbour", {{"rounds", count}, {"rounds_right", other}, {"pages_kept", count}, {"neighbour_page", page}, {"verdict", verdict}}), line_of_before("address_space: page tables: ", count, " rounds of a map and an unmap beside a page that another thread writes and reads: ", other, " rounds right, the page of the other thread ", page, ", ", count, " pages kept", ": ", verdict))
 			}

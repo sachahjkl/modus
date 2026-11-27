@@ -166,10 +166,10 @@ Kind :: enum i64 {
 	// handle or another mapping names.
 	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
 	// The kernel gives it for `Memory_Map` and `Handle_Give` of an object that `Memory_Protect` changed.
-	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, large pages), or of an area that the system keeps (a thread area).
+	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, contiguous memory), or of an area that the system keeps (a thread area).
 	// The kernel gives it for `Memory_Protect`.
 	Not_Multiple      = 36, // value: the argument; limit: the number that it must be a multiple of; found: the rest.
-	// The kernel gives it for `Memory_Create` with `Large_Pages` and a count that is not a multiple of 512.
+	// Services give it for a size, address, or step that is not a multiple of its unit (such as a timed stream byte count or a time-zone offset).
 	Not_Authentic     = 37, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
 	// The cryptography module gives it for an open of a sealed text, and QUIC for a packet or a handshake that
 	// does not verify. See [not authentic](term:not-authentic).

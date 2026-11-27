@@ -496,12 +496,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		flags := transmute(op.Memory_Flags)v[2]
 		// An uncommitted object has its pages paid later: no frame now, and
-		// a frame list. A large-page object is contiguous, of whole large pages.
-		if .Uncommitted in flags && flags != {.Uncommitted} || .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0 {
+		// a frame list.
+		if .Uncommitted in flags && flags != {.Uncommitted} {
 			return .Argument_Refused
 		}
-		large_pages := .Large_Pages in flags
-		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags || large_pages, now = .Frames_Now in flags, uncommitted = .Uncommitted in flags, large_pages = large_pages) or_return
+		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags, now = .Frames_Now in flags, uncommitted = .Uncommitted in flags) or_return
 		handle := handle_insert(process, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
@@ -585,9 +584,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		if region.uncommitted {
 			flags += {.Uncommitted}
-		}
-		if region.large_pages {
-			flags += {.Large_Pages}
 		}
 		results[1] = transmute(u64)flags
 		return .Succeeded

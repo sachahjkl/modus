@@ -264,17 +264,14 @@ A large page maps 2 MiB with one entry of the page table, so a process that read
 
 What exists today:
 
-- The flag `Large_Pages` of `Memory_Create`: the object is contiguous, its frames are one run aligned on 2 MiB, and its count of pages is a multiple of 512, or `Memory_Create` refuses it. `Memory_Map` uses a large page for each aligned 2 MiB of the mapping.
-- A protection change must cover the whole mapping, and a decommit of such an object is refused, because it is contiguous.
-- `Uncommitted` with any other flag is refused, so an uncommitted object never has large pages.
-- The process `address_space` tests the flag and measures random reads over 64 MiB with large pages and with 4 KiB pages.
+- Aligned 2 MiB and 1 GiB frame runs through `Frames_Now` on `Memory_Create` and `Memory_Commit` ([frames_of_a_process.md](frames_of_a_process.md)): with no page-size flag and no privilege, the kernel takes aligned physical runs when the budget quota and free memory allow, installs 2 MiB or 1 GiB entries in aligned mappings, falls back cleanly to smaller pages when fragmented, and demotes without allocating frames on partial `Memory_Protect` or `Decommit`.
+- The process `address_space` measures random reads over 64 MiB through aligned 2 MiB runs and through 4 KiB pages of the same object, and `pdpe1gb_probe` tests 1 GiB runs and zero-allocation demotion.
 
 What is missing:
 
 - **The surfaces.** `display.open` makes each surface with 4 KiB pages. A surface of 1920 × 1080 with two pictures is 16 MiB, eight large pages.
-- **The decoded pictures and the frames of a video.** No process asks for large pages for them.
-- **The arenas.** An arena is an uncommitted object ([memory_without_a_bound.md](memory_without_a_bound.md)), and the kernel refuses large pages for it. Large pages in an arena need a commit by whole runs of 2 MiB, which is a change of the kernel.
-- **A measure.** The gain is measured for random reads only. A surface is mostly written and read in rows, where the gain can be small. The use for surfaces and pictures waits for a measure of a frame of the compositor with both forms. A contiguous run of 2 MiB can also fail on a fragmented machine, where 4 KiB pages succeed, so each use needs its refusal path.
+- **The decoded pictures and the frames of a video.** No process commits them in aligned 2 MiB `Frames_Now` runs yet.
+- **A measure.** The gain is measured for random reads only. A surface is mostly written and read in rows, where the gain can be small. The use for surfaces and pictures waits for a measure of a frame of the compositor with both forms.
 
 ## C. The draw table
 

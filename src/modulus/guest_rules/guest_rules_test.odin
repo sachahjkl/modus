@@ -564,7 +564,6 @@ fault_answer_tries_each_fact :: proc(t: ^testing.T) {
 		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, slot_no_access = true, present = true, write = true}, .Refused, "a slot No_Access"},
 		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = false, has_entry = true, write = true}, .Refused, "a page not committed"},
 		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = false, write = true}, .Refused, "no entry"},
-		{Fault_Facts{mapped = true, switching = true, large = true, has_access = true, committed = true, has_entry = true, present = true, write = true}, .Page_Give, "a large mapping"},
 		{Fault_Facts{mapped = true, switching = true, has_access = false, committed = true, has_entry = true, present = true, write = true}, .Page_Give, "a mapping No_Access whole"},
 		{Fault_Facts{mapped = true, switching = false, has_access = true, committed = true, has_entry = true, present = true, write = true}, .Page_Give, "a mapping that does not switch"},
 		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, present = true}, .Page_Give, "a read"},

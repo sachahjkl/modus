@@ -316,11 +316,10 @@ Operation :: enum u32 {
 	// - `pages`: the count of pages, from 1; at most `MEMORY_PAGE_LIMIT` (1 GiB) for an object that is not
 	//   contiguous.
 	// - `flags`: a `Memory_Flags`:
-	//   - `Frames_Now`: each page gets its page frame now, not at its first use (a page on first use);
+	//   - `Frames_Now`: each page gets its page frame now, not at its first use (a page on first use),
+	//     taking aligned 2 MiB runs when available and permitted by the budget run quota;
 	//   - `Contiguous`: the frames follow each other in physical memory and do not move, for a device;
-	//   - `Uncommitted`: no page is paid now, and `Memory_Commit` pays them later; with no other flag;
-	//   - `Large_Pages`: `Contiguous`, in one run aligned on 2 MiB, with `pages` a multiple of
-	//     `LARGE_PAGE_PAGES`, so that a mapping uses large pages.
+	//   - `Uncommitted`: no page is paid now, and `Memory_Commit` pays them later; with no other flag.
 	//
 	// **Results**: the memory handle.
 	//
@@ -328,8 +327,7 @@ Operation :: enum u32 {
 	//
 	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Spend**.
 	// - `Argument_Refused`: `pages` is 0, or above the limit; a flag that the kernel does not know;
-	//   `Uncommitted` with another flag; `Large_Pages` with a count that is not a multiple of
-	//   `LARGE_PAGE_PAGES`.
+	//   `Uncommitted` with another flag.
 	// - `Budget_Or_Capacity_Exhausted`: the budget cannot pay, or the handle table of the process is full.
 	// - `Callee_Busy`: the table of the memory objects of the kernel is full, or a contiguous object finds
 	//   no free run of its length, though the budget can pay.
@@ -348,8 +346,8 @@ Operation :: enum u32 {
 	// - `process`: 0 for this process, or a process handle with **Control**.
 	// - `address`: the address of the first page: a multiple of 4096, at least 4096, with the mapping below
 	//   `USER_END` and over no other mapping. 0: the kernel chooses the lowest free place from
-	//   `CHOSEN_BASE`, with a page with no mapping before and after it, on 2 MiB for an object of
-	//   `Large_Pages` that is mapped by whole large pages. With `At_Address_Zero`, the address is 0.
+	//   `CHOSEN_BASE`, with a page with no mapping before and after it, aligned on 1 GiB or 2 MiB for a
+	//   non-contiguous mapping large enough to hold aligned runs. With `At_Address_Zero`, the address is 0.
 	// - `flags`: a `Map_Flags`: `Write`, `Execute`, `No_Access` (the pages fault until `Memory_Protect`
 	//   gives them access), `Receive_Handles` (this process agrees to receive handles through this memory
 	//   object from `Handle_Give`), `At_Address_Zero`, or `Write_Combining` (device memory of
@@ -418,7 +416,7 @@ Operation :: enum u32 {
 	//
 	// - `memory`: a memory handle, with any rights.
 	//
-	// **Results**: the count of pages; the flags `Contiguous`, `Uncommitted` and `Large_Pages` that the object
+	// **Results**: the count of pages; the flags `Contiguous` and `Uncommitted` that the object
 	// was made with. `Frames_Now` is not given: an object made with it is the same as one whose pages each
 	// had their first use.
 	//
@@ -925,7 +923,7 @@ Operation :: enum u32 {
 	// Gives the address that a device uses for the first page of a memory object, so that a device service
 	// gives it to its device, which reads and writes the memory with no processor (direct memory access).
 	// For an object whose pages follow each other in physical memory and do not move (an object created
-	// `Contiguous` or `Large_Pages`, or the registers of a device), it is the physical address of the first
+	// `Contiguous`, or the registers of a device), it is the physical address of the first
 	// page.
 	//
 	// When the IOMMU is in use, the call is also the declaration: each page of the object, which is not
@@ -3153,16 +3151,13 @@ Memory_Flag :: enum u64 {
 	// The pages are not paid at the creation: the budget pays the frame list only. Memory_Commit pays pages
 	// and makes them usable; a page that is not committed has no frame, and an access to it is a fault.
 	Uncommitted = 2,
-	// Contiguous, in one run aligned on 2 MiB, and the page count is a multiple of LARGE_PAGE_PAGES: a mapping
-	// uses a large page for each 2 MiB whose address and first page are aligned.
-	Large_Pages = 3,
 }
 // The flags of one `Memory_Create`. Example: `{.Frames_Now}`.
 Memory_Flags :: bit_set[Memory_Flag;u64]
 // The flags that `Memory_Create` knows, as the word of its argument: a word
 // with another bit gives `Argument_Refused`, so that a later kernel can give
 // that bit a meaning.
-MEMORY_FLAGS_KNOWN :: u64(1) << u64(Memory_Flag.Frames_Now) | u64(1) << u64(Memory_Flag.Contiguous) | u64(1) << u64(Memory_Flag.Uncommitted) | u64(1) << u64(Memory_Flag.Large_Pages)
+MEMORY_FLAGS_KNOWN :: u64(1) << u64(Memory_Flag.Frames_Now) | u64(1) << u64(Memory_Flag.Contiguous) | u64(1) << u64(Memory_Flag.Uncommitted)
 
 LARGE_PAGE_PAGES :: 512 // The pages of 4096 bytes of one large page (2 MiB): one entry of the page directory of the processor.
 RANGE_TABLE_CAPACITY :: 256 // The ranges of one Memory_Commit or Memory_Protect. More gives `Argument_Refused`.
@@ -3354,7 +3349,7 @@ Process_Mapping_Flag :: enum u32 {
 	Shared      = 5, // Another mapping or another handle names the memory object.
 	Thread_Area = 6, // The thread record and the kernel ring of a thread.
 	Uncommitted = 7, // An object made with Uncommitted: `committed` says which part its budget pays.
-	Large       = 8, // The mapping uses large pages of 2 MiB.
+	Large       = 8, // The mapping has present large page entries (2 MiB or 1 GiB).
 	Protected   = 9, // Memory_Protect changed the protection of pages of the mapping.
 	No_Access   = 10, // The protection of the mapping is No_Access now.
 	Write_Combining = 11, // Memory_Map gave `Write_Combining`: the pages of device memory are write-combining, not uncached.

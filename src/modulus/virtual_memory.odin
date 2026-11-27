@@ -113,7 +113,7 @@ pt_has_present_entries :: proc "contextless" (pt: u64) -> bool {
 // has reloaded cr3 (clearing paging-structure caches per Intel SDM Vol. 3A).
 // Only then are replaced tables zeroed or parked onto process.demotion_tables.
 mapping_install_present_range :: proc "contextless" (process: ^Process, mapping: ^Mapping, region: ^Region, first_in_mapping: u64, count: u64) {
-	if mapping.large || mapping.bits == 0 || mapping_is_switching(mapping) {
+	if mapping.bits == 0 || mapping_is_switching(mapping) {
 		return
 	}
 	allow_runs := !region.contiguous && frame_runs_arch_enabled() && process_records[index_of_process(process)].mode == .None && intrinsics.atomic_load(&region.marked_pages) == 0
@@ -234,12 +234,12 @@ mapping_install_present_range :: proc "contextless" (process: ^Process, mapping:
 
 // demote_mapping_range splits any 1 GiB or 2 MiB hardware large page
 // entries intersecting [first_in_mapping, first_in_mapping + count) of a
-// non-Large_Pages mapping down to 4 KiB entries using parked demotion
-// tables (zero allocation). Clears SLOT_RUN_* bits on demoted runs in
-// region. Caller holds process lock; pass region_locked = true if caller
-// already holds region_locks[mapping.region].
+// mapping down to 4 KiB entries using parked demotion tables (zero
+// allocation). Clears SLOT_RUN_* bits on demoted runs in region. Caller
+// holds process lock; pass region_locked = true if caller already holds
+// region_locks[mapping.region].
 demote_mapping_range :: proc "contextless" (process: ^Process, mapping: ^Mapping, region: ^Region, first_in_mapping: u64, count: u64, self: ^Processor, region_locked := false) {
-	if mapping.large || (mapping.entries_2m == 0 && mapping.entries_1g == 0) || count == 0 {
+	if (mapping.entries_2m == 0 && mapping.entries_1g == 0) || count == 0 {
 		return
 	}
 	start_addr := mapping.address + first_in_mapping * PAGE_SIZE
@@ -453,7 +453,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 			// mapping of this region in the calling process so arenas get
 			// prefaulted large pages immediately.
 			for &mapping in process.mappings {
-				if mapping.page_count == 0 || mapping.region != region_index || mapping.large {
+				if mapping.page_count == 0 || mapping.region != region_index {
 					continue
 				}
 				map_end := mapping.first + mapping.page_count
@@ -504,6 +504,25 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(process.table))
 	waiters_on_frames_wake(process, region, ranges)
+	// Clear enclosing 1 GiB and 2 MiB run markers before freeing any frame,
+	// even when the region is unmapped or mapped without large entries, so a
+	// later aligned Memory_Map can never install a large entry over freed
+	// frames.
+	for range in ranges {
+		run_end := range.first + range.page_count
+		for base := range.first &~ (frame_runs.RUN_1G_PAGES - 1); base < run_end; base += frame_runs.RUN_1G_PAGES {
+			base_slot := region_slot(region, base)
+			if base_val := intrinsics.atomic_load(base_slot); base_val & SLOT_RUN_1G != 0 {
+				intrinsics.atomic_store(base_slot, base_val &~ SLOT_RUN_1G)
+			}
+		}
+		for base := range.first &~ (frame_runs.RUN_2M_PAGES - 1); base < run_end; base += frame_runs.RUN_2M_PAGES {
+			base_slot := region_slot(region, base)
+			if base_val := intrinsics.atomic_load(base_slot); base_val & SLOT_RUN_2M != 0 {
+				intrinsics.atomic_store(base_slot, base_val &~ SLOT_RUN_2M)
+			}
+		}
+	}
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	cache := &self.frame_cache
@@ -599,7 +618,7 @@ commit_continuation_try_begin :: proc "contextless" (cpu: ^Processor, index: u32
 		lock_free(&frame_lock, .Frame)
 		lock_free(region_lock, .Region)
 		for &mapping in process.mappings {
-			if mapping.page_count != 0 && mapping.region == region_index && !mapping.large {
+			if mapping.page_count != 0 && mapping.region == region_index {
 				mapping_install_present_range(process, &mapping, region, 0, mapping.page_count)
 			}
 		}
@@ -805,7 +824,7 @@ commit_continuation_install_and_release :: proc "contextless" (thread: ^Thread) 
 	process := &processes[process_index]
 	taken := process_lock(process_index)
 	for &mapping in process.mappings {
-		if mapping.page_count != 0 && mapping.region == region_index && !mapping.large {
+		if mapping.page_count != 0 && mapping.region == region_index {
 			mapping_install_present_range(process, &mapping, &regions[region_index], 0, mapping.page_count)
 		}
 	}
@@ -1100,7 +1119,7 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		}
 		if !whole {
 			if regions[mapping.region].contiguous {
-				return mappings, .Argument_Refused // Device memory, large pages: the protection is of the whole mapping.
+				return mappings, .Argument_Refused // Device memory, contiguous memory: the protection is of the whole mapping.
 			}
 			if _, alone := object_only_here(process, mapping.region); !alone {
 				return mappings, .Wrong_State
@@ -1189,10 +1208,7 @@ protect_entries_change :: proc "contextless" (process: ^Process, mapping: ^Mappi
 // page. A part counts each of its pages: its marks are written in each slot.
 protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_Range, flags: op.Map_Flags) -> u64 {
 	whole := range.address == mapping.address && range.page_count == mapping.page_count
-	switch {
-	case mapping.large:
-		return range.page_count / op.LARGE_PAGE_PAGES
-	case whole && intrinsics.atomic_load(&regions[mapping.region].marked_pages) == 0:
+	if whole && intrinsics.atomic_load(&regions[mapping.region].marked_pages) == 0 {
 		if .No_Access in flags {
 			return mapping.present_page_count
 		}
@@ -1335,7 +1351,7 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 		// again and not given: the marks are of the object, so
 		// they would reach another mapping.
 		whole := first == 0 && count == mapping.page_count
-		if !whole && !mapping.large {
+		if !whole {
 			demote_mapping_range(process, mapping, region, first, count, self)
 		}
 		if !region.contiguous && (!whole || intrinsics.atomic_load(&region.marked_pages) != 0) {
@@ -1364,30 +1380,6 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 			lock_free(lock, .Region)
 		}
 		// The entries that exist take the new protection.
-		if mapping.large {
-			for part in 0 ..< mapping.page_count / op.LARGE_PAGE_PAGES {
-				address := mapping.address + part * LARGE_PAGE_SIZE
-				entry := page_directory_entry(process.table, address)
-				if entry == nil {
-					continue
-				}
-				present := entry^ & PAGE_PRESENT != 0
-				frame := region.physical + (mapping.first + part * op.LARGE_PAGE_PAGES) * PAGE_SIZE
-				entry^ = mapping.bits == 0 ? 0 : frame | mapping.bits | PAGE_LARGE
-				if present && mapping.bits == 0 {
-					mapping.present_page_count -= op.LARGE_PAGE_PAGES
-					mapping.entries_2m -= 1
-				} else if !present && mapping.bits != 0 {
-					mapping.present_page_count += op.LARGE_PAGE_PAGES
-					mapping.entries_2m += 1
-				}
-				if self.table == process.table {
-					page_flush(address)
-				}
-			}
-			changed += count
-			continue
-		}
 		protect_entries_change(process, mapping, region, first, count, self)
 		changed += count
 	}

@@ -144,9 +144,10 @@ GRANT_VALUE_FILE_ADDRESS :: 1 // A service: where the file of the process is, re
 // The value 2, for a service: the size in bytes of its file at the address
 // of the value 1.
 GRANT_VALUE_FILE_SIZE :: 2
-// The value 3 of a process with the grant Store: the size in bytes of the
-// file of the storage service, which its client reads (package storage).
-GRANT_VALUE_STORAGE_FILE_SIZE :: 3
+// The value 18 of a process with the grant Store or Read_Only_Trees: the size
+// in bytes of the file of the storage service, which its client reads (package
+// storage; matches core:sys/modus CONTEXT_VALUE_STORAGE_FILE_SIZE).
+GRANT_VALUE_STORAGE_FILE_SIZE :: 18
 // The value 4 of a per-principal service (`module_files`, `collector`): the
 // principal of its store (modus:disk_process; modus:contract/wide_grants).
 GRANT_VALUE_SERVICE_PRINCIPAL :: 4

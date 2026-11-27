@@ -234,7 +234,6 @@ import "modus:system"
 #assert(u64(modus.Memory_Flag.Frames_Now) == u64(op.Memory_Flag.Frames_Now))
 #assert(u64(modus.Memory_Flag.Contiguous) == u64(op.Memory_Flag.Contiguous))
 #assert(u64(modus.Memory_Flag.Uncommitted) == u64(op.Memory_Flag.Uncommitted))
-#assert(u64(modus.Memory_Flag.Large_Pages) == u64(op.Memory_Flag.Large_Pages))
 
 #assert(len(modus.Commit_Flag) == len(op.Commit_Flag))
 #assert(u64(modus.Commit_Flag.Decommit) == u64(op.Commit_Flag.Decommit))

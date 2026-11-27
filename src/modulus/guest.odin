@@ -5,6 +5,7 @@ import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:extended_switch"
 import "modulus:guest_rules"
+import "modulus:word_table"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): a
 // process whose page table is the nested page table of a guest processor,
@@ -634,19 +635,19 @@ guest_page_answer :: proc "contextless" (process: ^Process, address: u64, write:
 	entry: ^u64
 	if mapping != nil {
 		facts.switching = mapping_is_switching(mapping)
-		facts.large = mapping.large
 		facts.has_access = mapping.bits != 0
 		inside: bool
 		page, inside = guest_rules.switching_page_of(mapping.address, mapping.page_count, address)
 		facts.mapped = inside
-		if inside && !mapping.large {
+		if inside {
 			region = &regions[mapping.region]
 			state := region_page_state(region, mapping.first + page)
 			facts.slot_no_access = state & SLOT_NO_ACCESS != 0
 			facts.committed = page_committed(region, state)
-			entry = page_entry(process.table, mapping.address + page * PAGE_SIZE)
-			facts.has_entry = entry != nil
-			if entry != nil {
+			entry_size: word_table.Entry_Size
+			entry, entry_size = page_entry_with_size(process.table, mapping.address + page * PAGE_SIZE)
+			facts.has_entry = entry != nil && entry_size == .Size_4K
+			if facts.has_entry {
 				facts.present = entry^ & PAGE_PRESENT != 0
 				facts.allows = (!write || entry^ & PAGE_WRITE != 0) && (!execute || entry^ & PAGE_NO_EXECUTE == 0)
 			}

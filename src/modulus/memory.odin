@@ -170,36 +170,6 @@ frames_take :: proc "contextless" (count: u64) -> u64 {
 	return 0
 }
 
-// frames_take_aligned takes count page frames in one block whose first
-// frame is a multiple of alignment frames (a large page: 512), not zero.
-// 0: no such block. The caller holds the frame lock.
-frames_take_aligned :: proc "contextless" (count: u64, alignment: u64) -> u64 {
-	if alignment <= 1 {
-		return frames_take(count)
-	}
-	if count == 0 || count > free_frames {
-		return 0
-	}
-	first := u64(0)
-	search: for first + count <= frame_count {
-		for frame in first ..< first + count {
-			if frame_used(frame) {
-				// The next candidate is the multiple of the alignment above
-				// the used frame, not the next multiple only.
-				first = (frame / alignment + 1) * alignment
-				continue search
-			}
-		}
-		for frame in first ..< first + count {
-			frame_bits[frame / 64] |= 1 << (frame % 64)
-		}
-		free_frames -= count
-		frame_runs.on_frames_taken(&frame_runs_table, first, count)
-		return first * PAGE_SIZE
-	}
-	return 0
-}
-
 // frames_free gives frames back.
 frames_free :: proc "contextless" (address: u64, count: u64) {
 	lock_take(&frame_lock, .Frame)
@@ -562,11 +532,10 @@ Freed_Tables :: struct {
 }
 
 // tables_hold makes the tables that are missing on the way to the table
-// whose entries index an address at the level below lowest_level (1: the
-// table of the last level; 2: the table of the second level, for a large
-// page), adds count held entries to that table with one addition, and gives
-// the entry of the address: the first of the count entries, which the
-// caller keeps inside that one table. The budget
+// whose entries index an address at the level below lowest_level (level 1:
+// the last-level table), adds count held entries to that table with one
+// addition, and gives the entry of the address: the first of the count
+// entries, which the caller keeps inside that one table. The budget
 // pays for each new table. nil: the budget has no page; a table made by this
 // call goes to freed, and the caller frees it after its shoot-down. The
 // caller holds the process lock.
@@ -614,21 +583,9 @@ page_entry_hold :: proc "contextless" (table: u64, address: u64, count: u64, bud
 	return tables_hold(table, address, 1, count, budget, freed)
 }
 
-// page_directory_entry_hold gives the entry of the second level for an
-// address aligned on 2 MiB of a new mapping of large pages, and holds it.
-// nil: the budget has no page.
-page_directory_entry_hold :: proc "contextless" (table: u64, address: u64, budget: ^u32, freed: ^Freed_Tables) -> ^u64 {
-	entry := tables_hold(table, address, 2, 1, budget, freed)
-	if entry != nil && entry^ & PAGE_PRESENT != 0 {
-		// map_region refused an overlap: no mapping holds these 2 MiB.
-		page_table_count_broken("the place of a large page is held")
-	}
-	return entry
-}
-
 // page_entries_release ends count held entries of one table: the table
-// named by the entry of holder_level on the way to an address (1: the table
-// of the last level; 2: the table of the second level, for a large page).
+// named by the entry of holder_level on the way to an address (1: last-level
+// PT; 2: PD for a 2 MiB entry; 3: PDPT for a 1 GiB entry).
 // The caller cleared those entries first. A table whose count falls to 0
 // leaves its parent: its entry there becomes 0, the table goes to freed,
 // and the parent loses one held entry, up to the top table, which never
