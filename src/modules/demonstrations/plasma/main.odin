@@ -1,8 +1,8 @@
 // A demonstration: an animation that the processor computes for each frame.
 //
 // **What it is for.** It is a load that never ends and never waits for an
-// input: one thread computes each pixel of a picture of 320 by 200, about
-// 30 times in one second, with integers only. It shows the share of the
+// input: one thread computes each pixel of a picture of 320 by 200, advancing
+// its phase by real monotonic time with integers only. It shows the share of the
 // processor of a busy process in `monitor`, and the cost of a full picture
 // for the compositor.
 //
@@ -26,7 +26,9 @@ WIDTH :: 320
 HEIGHT :: 200
 // The tool counts the module, its load, its stacks and its window at the largest scale.
 MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
-FRAME_INTERVAL :: 33
+// Plan value: phase advances one step per 33 ms of real monotonic time so the
+// animation moves at the same visual speed at 60 Hz, 144 Hz, or 240 Hz.
+PHASE_MILLISECONDS :: 33
 
 sine: [256]i32 // One period, from -127 to 127: the index is the angle in 256ths of a turn.
 palette: [256]graphics.Color
@@ -41,11 +43,13 @@ records_now, records_before: [2]interface.Draw_Record
 drawing: interface.Window_Drawing
 
 // The entry of plasma: it builds the sine table and the palette, then
-// computes and shows one picture every 33 ms for ever.
+// computes and shows one picture whenever its monotonic phase advances or a
+// new surface owes a picture.
 //
-// With no window it stops with `Failed`. The time of each picture is
-// fixed from the first one: after a slow picture, the next pictures follow
-// with no sleep until the process is on time again.
+// With no window it stops with `Failed`. Phase advances from real monotonic
+// time so animation speed stays uniform across display refresh rates, and
+// display.wait sleeps cleanly between phases and while the surface is not
+// drawable (for example during a rescale).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "plasma")
@@ -70,9 +74,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture_memories[0] = picture_pixels[:]
 	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], picture_memories[:])
 	frame: u64
-	next := system.time()
+	start_ms := system.time()
+	last_phase: u64
 	for {
-		t := int(frame)
+		for _ in interface.window_next_event(&drawing, &window) {}
+		now := system.time()
+		phase := (now - start_ms) / PHASE_MILLISECONDS
+		if frame > 0 && phase == last_phase && !display.picture_owed(&window) {
+			_ = display.wait(&window, start_ms + (phase + 1) * PHASE_MILLISECONDS)
+			continue
+		}
+		if !display.canvas_wait(&window) {
+			_ = display.wait(&window, system.time() + PHASE_MILLISECONDS)
+			continue
+		}
+		// Derive phase from elapsed monotonic time so animation speed is
+		// independent of display refresh rate.
+		t := int(phase)
 		for y in 0 ..< HEIGHT {
 			row := picture_pixels[y * WIDTH:]
 			a := sine[(y * 2 + t) & 255]
@@ -85,9 +103,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if frame == 0 {
 			system.log_fact(.Info, Running{})
 		}
+		last_phase = phase
 		frame += 1
-		for _ in interface.window_next_event(&drawing, &window) {}
-		next += FRAME_INTERVAL
-		system.sleep(next)
+		_ = display.wait(&window, start_ms + (phase + 1) * PHASE_MILLISECONDS)
 	}
 }

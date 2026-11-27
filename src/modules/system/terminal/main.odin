@@ -286,7 +286,6 @@ layout :: proc "contextless" () {
 	layout_for_size(chrome_w + columns * CELL_WIDTH, chrome_h + rows * CELL_HEIGHT)
 }
 
-FRAME_TIME :: 16 // Milliseconds.
 SAMPLE_TIME :: 250 // Milliseconds of one measure of the rates.
 HISTORY :: 48 // The measures that the graph shows.
 GRAPH_BAR :: 4
@@ -1628,7 +1627,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	request.follow = true
 	now := system.time()
-	next_frame := now
 	sample_time := now
 	sample_lines, sample_records, sample_bytes, sample_entries: u64
 	frames, sample_frames: u64
@@ -1641,6 +1639,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	second_logged := false
 	drawn: u32 // The value of activity at the last picture.
 	dirty := true // The view changed with no record: a key, the first picture.
+	draw_refused_backoff := false // Drawing module refused a draw: wait before retrying to avoid spinning.
 	STATE_TIME :: 250 // Milliseconds between two looks at the state of the process.
 	picture_waits := false // A picture waits until the compositor took the picture before it.
 	// The event word of this thread at the last look at the state of the
@@ -1668,6 +1667,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// A held arrow button of the scroll bar takes its next step at
 			// a time of the clock: the wait ends there at the latest.
 			deadline := process != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER
+			if measure {
+				deadline = min(deadline, sample_time + SAMPLE_TIME)
+			}
 			step_time, step_due := interface.window_scroll_bar_wake(&drawing)
 			if step_due {
 				deadline = min(deadline, step_time)
@@ -1676,7 +1678,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			activity_at_wait = seen
 			system.wait_end(&wait, deadline)
 			now = system.time()
-			next_frame = now
 			if step_due && now >= step_time {
 				dirty = true
 			}
@@ -1685,10 +1686,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The wait ends when the compositor has read the ring of the
 			// window, or at the next look at the process.
 			now = display.wait(&window, system.time() + STATE_TIME)
-		case .Next_Frame:
-			// A record during this wait needs no wake: the picture is due
-			// already, and the next picture takes it.
-			now = display.wait(&window, next_frame)
+		case .Draw_Now:
+			// Draw immediately without an artificial frame timer; compositor
+			// canvas readiness paces continuous output naturally. If the
+			// drawing module refused the previous draw, wait STATE_TIME so a
+			// permanently failing draw never spins at 100% CPU.
+			if draw_refused_backoff {
+				draw_refused_backoff = false
+				now = display.wait(&window, system.time() + STATE_TIME)
+			} else {
+				now = system.time()
+			}
 		}
 		// The choice of the settings page, read at each turn: the
 		// compositor tells only a window with a surface, and this window
@@ -1810,11 +1818,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if display.picture_owed(&window) {
 			dirty = true
 		}
-		// A change that this turn does not draw waits for the next picture:
-		// the start of the next turn says it, before its wait.
-		if now < next_frame {
-			continue
-		}
 		// The stop of the process is a change too: it is known before the
 		// look at the canvas, so a stop that waits for the compositor is a
 		// due picture. The event word is read before the state: a stop
@@ -1847,9 +1850,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if picture_waits {
 			continue
 		}
-		next_frame = max(next_frame + FRAME_TIME, now + 1)
 		current := intrinsics.atomic_load(&activity)
-		if !measure && !dirty && current == drawn {
+		sample_due := measure && now - sample_time >= SAMPLE_TIME
+		if !sample_due && !dirty && current == drawn {
 			continue
 		}
 		drawn, dirty = current, false
@@ -1907,6 +1910,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// before its wait that it is due.
 		if drawing.late || !drawing.drawn {
 			dirty = true
+			if !drawing.drawn {
+				draw_refused_backoff = true
+			}
 		}
 		// A press on an item of the action bar runs its key, as the key
 		// does: the next picture shows the moved view.

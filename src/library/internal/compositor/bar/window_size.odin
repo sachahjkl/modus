@@ -6,16 +6,15 @@ import "modus:display"
 // (src/md/features/window_resize.md). The compositor resizes the windows;
 // these procedures hold no state, so a host test checks each edge.
 
-// The pixels outside the frame of a window that are still its edge: the
-// border is 2 pixels, too thin to take with the pointer.
-RESIZE_REACH :: 6
-// The pixels along each edge from a corner of the frame that take the edge
-// beside it too, so a corner is a target as large as a grip. At the bottom
-// right corner the square of that size inside the frame is the corner too:
-// it holds the grip that the compositor draws there.
-CORNER_REACH :: 14
-// The side of the grip that the compositor draws in the bottom right corner
-// of a resizable window, inside its border.
+// Plan value: 8 logical pixels outside the frame give a comfortable grab zone
+// on all four edges (10 logical pixels including the 2 px border), matching
+// modern desktop toolkits without stealing interior client clicks.
+RESIZE_REACH :: 8
+// Plan value: 16 logical pixels along each edge from a corner give a generous
+// diagonal target at all four corners; at the bottom-right corner the interior
+// square also covers the resize grip.
+CORNER_REACH :: 16
+// Plan value: 11 logical pixels for the visual resize grip inside the bottom-right corner.
 GRIP_SIZE :: 11
 
 // One edge of the frame of a window.
@@ -50,13 +49,14 @@ Resize_Start :: struct {
 }
 
 // resize_edges_at gives the edges of a frame at a place of the pointer:
-// the border at the left, the right and the bottom, and the band of
-// RESIZE_REACH pixels around the frame. The title bar is not an edge: a
-// press on it moves the window; the band above it is the top edge, and its
-// left and right columns are the left and right edges. Within CORNER_REACH
-// of a corner, an edge takes the edge beside it too, and the square of
-// CORNER_REACH inside the bottom right corner is that corner: the grip. A place far from
-// the frame, or inside it elsewhere, gives no edge.
+// the border at the left, the right, the top and the bottom, and the band of
+// RESIZE_REACH pixels around the frame. The title bar below its top border is
+// not an edge: a press on it moves the window; its left and right borders are
+// the left and right edges, and titlebar buttons take priority over the top
+// border in the compositor. Within CORNER_REACH of a corner, an edge takes the
+// edge beside it too, and the square of CORNER_REACH inside the bottom right
+// corner is that corner: the grip. A place far from the frame, or inside it
+// elsewhere, gives no edge.
 resize_edges_at :: proc "contextless" (outer: Outer_Rectangle, border, pointer_x, pointer_y: int) -> (edges: Resize_Edges) {
 	left, top := outer.x, outer.y
 	right, bottom := outer.x + outer.width, outer.y + outer.height
@@ -68,7 +68,7 @@ resize_edges_at :: proc "contextless" (outer: Outer_Rectangle, border, pointer_x
 	} else if pointer_x >= right - border {
 		edges += {.Right}
 	}
-	if pointer_y < top {
+	if pointer_y < top + border {
 		edges += {.Top}
 	} else if pointer_y >= bottom - border {
 		edges += {.Bottom}
@@ -241,4 +241,163 @@ resize_drag :: proc "contextless" (start: Resize_Start, pointer_x, pointer_y: in
 		y = bottom - frame_height - height
 	}
 	return
+}
+
+// Live_Resize_Drag holds the coalesced 1-in-flight live resize state for one
+// window (src/md/features/window_resize.md, "The drag"). It keeps no handles
+// or pointers so host tests exercise every transition directly.
+Live_Resize_Drag :: struct {
+	active:          bool,
+	edges:           Resize_Edges,
+	anchor_valid:    bool,
+	anchor_right:    int, // x + width at drag start; stays invariant across live and post-release commits.
+	anchor_bottom:   int, // y + height at drag start; stays invariant across live and post-release commits.
+	target_width:    int,
+	target_height:   int,
+	final_due:       bool,
+	final_width:     int,
+	final_height:    int,
+	final_edges:     Resize_Edges,
+	has_declined:    bool,
+	declined_width:  int,
+	declined_height: int,
+}
+
+// Live_Resize_Ask is the next Resized request that the compositor should send.
+Live_Resize_Ask :: struct {
+	ask:    bool,
+	width:  int,
+	height: int,
+	edges:  Resize_Edges,
+}
+
+// live_resize_begin starts a live drag from the current shown place and size,
+// recording the opposite-edge anchor so intermediate screen clamps never drift
+// the anchored right or bottom edge across live or post-release commits.
+live_resize_begin :: proc "contextless" (state: ^Live_Resize_Drag, edges: Resize_Edges, x, y, width, height: int) {
+	if state == nil {
+		return
+	}
+	state^ = {
+		active        = true,
+		edges         = edges,
+		anchor_valid  = true,
+		anchor_right  = x + width,
+		anchor_bottom = y + height,
+		target_width  = width,
+		target_height = height,
+	}
+}
+
+// live_resize_cancel abandons an active drag and any pending post-drag target
+// (for example, on Surface_Release or window close).
+live_resize_cancel :: proc "contextless" (state: ^Live_Resize_Drag) {
+	if state == nil {
+		return
+	}
+	state^ = {}
+}
+
+// live_resize_move records a new dragged target size and asks immediately when
+// the window is idle (no request or pending surface in flight) and the target
+// differs from both the shown size and any size just declined during this drag.
+live_resize_move :: proc "contextless" (state: ^Live_Resize_Drag, target_width, target_height, shown_width, shown_height: int, busy: bool) -> Live_Resize_Ask {
+	if state == nil || !state.active {
+		return {}
+	}
+	if state.has_declined && (target_width != state.declined_width || target_height != state.declined_height) {
+		state.has_declined = false
+	}
+	state.target_width = target_width
+	state.target_height = target_height
+	if busy || (target_width == shown_width && target_height == shown_height) {
+		return {}
+	}
+	if state.has_declined && target_width == state.declined_width && target_height == state.declined_height {
+		return {}
+	}
+	return {ask = true, width = target_width, height = target_height, edges = state.edges}
+}
+
+// live_resize_release ends the pointer drag. If the window is idle and the
+// final size differs from the shown size, it asks immediately; if a previous
+// resize is still in flight, it saves the final target so live_resize_settled
+// sends it as soon as the in-flight surface lands.
+live_resize_release :: proc "contextless" (state: ^Live_Resize_Drag, final_width, final_height, shown_width, shown_height: int, busy: bool) -> Live_Resize_Ask {
+	if state == nil || !state.active {
+		return {}
+	}
+	edges := state.edges
+	declined_same := state.has_declined && final_width == state.declined_width && final_height == state.declined_height
+	state.active = false
+	state.has_declined = false
+	state.target_width = final_width
+	state.target_height = final_height
+	if declined_same {
+		state.final_due = false
+		if !busy {
+			state.anchor_valid = false
+		}
+		return {}
+	}
+	if busy {
+		state.final_due = true
+		state.final_width = final_width
+		state.final_height = final_height
+		state.final_edges = edges
+		return {}
+	}
+	state.final_due = false
+	if final_width == shown_width && final_height == shown_height {
+		state.anchor_valid = false
+		return {}
+	}
+	return {ask = true, width = final_width, height = final_height, edges = edges}
+}
+
+// live_resize_settled runs when an in-flight resize finishes (its new surface
+// was presented) and the window is idle again: if the drag is still active and
+// moved ahead, or a post-release final target waits, it returns the next ask.
+live_resize_settled :: proc "contextless" (state: ^Live_Resize_Drag, shown_width, shown_height: int, busy: bool) -> Live_Resize_Ask {
+	if state == nil || busy {
+		return {}
+	}
+	if state.active {
+		if state.target_width == shown_width && state.target_height == shown_height {
+			return {}
+		}
+		if state.has_declined && state.target_width == state.declined_width && state.target_height == state.declined_height {
+			return {}
+		}
+		return {ask = true, width = state.target_width, height = state.target_height, edges = state.edges}
+	}
+	if state.final_due {
+		width, height, edges := state.final_width, state.final_height, state.final_edges
+		state.final_due = false
+		if width == shown_width && height == shown_height {
+			state.anchor_valid = false
+			return {}
+		}
+		return {ask = true, width = width, height = height, edges = edges}
+	}
+	// Neither an active drag nor a queued final target remains: release anchor.
+	state.anchor_valid = false
+	return {}
+}
+
+// live_resize_declined records that the window declined or refused an asked
+// size so the drag stops re-asking that exact size until the pointer moves to
+// another size.
+live_resize_declined :: proc "contextless" (state: ^Live_Resize_Drag, declined_width, declined_height: int) {
+	if state == nil {
+		return
+	}
+	if state.active {
+		state.has_declined = true
+		state.declined_width = declined_width
+		state.declined_height = declined_height
+	}
+	if state.final_due && state.final_width == declined_width && state.final_height == declined_height {
+		state.final_due = false
+	}
 }

@@ -1,6 +1,6 @@
 # The due picture of a terminal: a change that waits is said before the wait
 
-A terminal draws at most one picture in each `FRAME_TIME` (16 ms). So a change can wait for its picture while every thread of the terminal waits. The machine test takes a picture only of a settled screen ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "When the tool takes a picture"), and a wait with a change looks the same as a wait with nothing to draw. The terminal says the difference with `Picture_Due` (`display.picture_due_set`). This file records where in its loop it says it, and why.
+A terminal draws whenever its view changes and the compositor took its previous picture (`display.canvas_free`), with no hardcoded `FRAME_TIME` sleep. While the compositor still reads the previous picture, or in `measure` mode between rate samples, every thread of the terminal can wait while a change is pending. The machine test takes a picture only of a settled screen ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "When the tool takes a picture"), and a wait with a change looks the same as a wait with nothing to draw. The terminal says the difference with `Picture_Due` (`display.picture_due_set`). This file records where in its loop it says it, and why.
 
 ## The purpose
 
@@ -24,13 +24,13 @@ No wake was lost. The drawer drew the change at its next frame. The terminal sai
 
 **One decision at the start of each turn, before each wait.** The turn reads the count of the groups of records once (`seen`). From that count, the count of the last picture (`drawn`), a change with no record (a key, a press of a scroll bar, a new font: `dirty`), the flag of the measure and the flag that the compositor still holds the canvas, the procedure `terminal_records.picture_wait_choose` gives two values:
 
-- the wait of the turn: nothing to draw, the compositor, or the next frame;
+- the wait of the turn: nothing to draw, the compositor, or draw now;
 - whether a picture is due: a change waits (`dirty`, or `seen` is not `drawn`).
 
 The terminal sends the due state, then waits. So each wait of the loop starts with the true state.
 
-- **Nothing to draw.** The wait is on `activity` with the value `seen`. A record after the read of `seen` ends the wait at once, because the kernel compares the word before it waits. The next turn then says that a picture is due before its own wait.
-- **The next frame or the compositor.** A picture is already due. A record during this wait needs no wake: the due picture is already said, and the next picture takes each record that the reader took before it.
+- **Nothing to draw.** The wait is on `activity` with the value `seen`. A record after the read of `seen` ends the wait at once, because the kernel compares the word before it waits. The next turn then says that a picture is due before its own wait. In `measure` mode, the deadline also bounds the wait to the next rate sample.
+- **The compositor or draw now.** A picture is already due. A record during this wait needs no wake: the due picture is already said, and the next picture takes each record that the reader took before it. There is no hardcoded `FRAME_TIME` sleep; if the drawing module refuses a draw, the terminal backs off by `STATE_TIME` (250 ms) before retrying so it never spins.
 
 **The stop of the process is a change too.** The kernel adds 1 to the event word of each thread of a process when a process that it holds stops. The terminal reads its event word just before its look at the state of the process, and the wait with nothing to draw also waits on that value. So a stop after the look ends the wait at once, and the same turn finds the stop and draws it. The look comes before the check of the canvas: a stop that waits for the compositor is known, and the next turn says that its picture is due. The look at each 250 ms stays as the deadline of that wait: the checks of a lost wake read it.
 
@@ -51,7 +51,7 @@ The terminal sends the due state, then waits. So each wait of the loop starts wi
 - The `Present` ends the due picture in the compositor. So a change that comes after the read of `drawn` and before the `Present` must be said again after the `Present`: the next turn does it.
 - The checks of a lost wake stay (`lost_wake_check` in `src/modules/system/terminal/main.odin`). They do not explain this fault, which lost no wake. They name the side of a lost wake if one comes.
 - The event word also changes for the other events of the thread: the end of another thread, an interrupt. Such an event ends one wait with nothing to draw, and the turn reads the word again at its look at the process, so no turn follows with no sleep.
-- A drawing module that refuses each draw makes the terminal try a frame at each `FRAME_TIME`. The window layer writes the refusal on the log one time; the frames that it tries cost only the calls.
+- A drawing module that refuses each draw makes the terminal back off by `STATE_TIME` before retrying. The window layer writes the refusal on the log one time; the backoff prevents a busy-spin.
 
 ## The state
 

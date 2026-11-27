@@ -246,25 +246,38 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if bar.inside_bar(bar_layout, pointer_y) {
 		return .Arrow
 	}
+	// Titlebar buttons take priority over the top resize border so hovering the
+	// top 2 px of Close/Maximize/Minimize shows the hand cursor matching clicks.
+	if position := window_position_at(pointer_x, pointer_y); position >= 0 {
+		if title_button_at(&clients[order[position]], pointer_x, pointer_y) != .None {
+			return .Pointing_Hand
+		}
+	}
 	// An edge of a resizable window: a press there drags it.
 	if _, edges := resize_edges_under_pointer(); edges != {} {
 		return resize_shape_of(edges)
 	}
 	for position := order_count - 1; position >= 0; position -= 1 {
 		client := &clients[order[position]]
-		outer_width := client.width + 2 * BORDER
-		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.height + TITLE_HEIGHT + BORDER) {
+		if client.minimized {
 			continue
 		}
+		outer_width, outer_height := window_outer_size(client)
+		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, outer_height) {
+			continue
+		}
+		if client.decoration == .Client {
+			return client.pointer_shape
+		}
 		switch {
-		case inside(pointer_x, pointer_y, client.x + outer_width - BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT):
+		case title_button_at(client, pointer_x, pointer_y) != .None:
 			return .Pointing_Hand
 		case pointer_y < client.y + TITLE_HEIGHT:
 			return .Move
 		case inside(pointer_x, pointer_y, client.x + BORDER, client.y + TITLE_HEIGHT, client.width, client.height):
 			// The surface of the window in front at this place: the shape that
 			// its process asked for, over its own surface only: a process must not
-// change the pointer over the window of another process.
+			// change the pointer over the window of another process.
 			return client.pointer_shape
 		}
 		return .Arrow // The border.

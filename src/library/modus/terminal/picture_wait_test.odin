@@ -23,14 +23,14 @@ the_decision_gives_a_due_picture_for_each_change_that_waits :: proc(t: ^testing.
 	drawn: u32 = 7
 	cases := [?]Case {
 		{false, false, drawn, drawn, false, .Nothing_To_Draw, false}, // No change: the terminal waits with nothing to draw.
-		{false, false, drawn + 1, drawn, false, .Next_Frame, true}, // A record during the last picture: due before the wait for the next frame.
-		{false, true, drawn, drawn, false, .Next_Frame, true}, // A key changed the view.
+		{false, false, drawn + 1, drawn, false, .Draw_Now, true}, // A record during the last picture: due and draws immediately.
+		{false, true, drawn, drawn, false, .Draw_Now, true}, // A key changed the view.
 		{false, false, drawn + 1, drawn, true, .Compositor, true}, // A change, and the compositor still reads the canvas.
 		{false, false, drawn, drawn, true, .Nothing_To_Draw, false}, // No change: the canvas does not matter.
-		{false, false, 0, max(u32), false, .Next_Frame, true}, // The count passes its largest value: still a change.
-		{true, false, drawn, drawn, false, .Next_Frame, false}, // The rates draw at each frame, with no change of the text.
+		{false, false, 0, max(u32), false, .Draw_Now, true}, // The count passes its largest value: still a change.
+		{true, false, drawn, drawn, false, .Nothing_To_Draw, false}, // Measure mode with no text change waits for sample tick or input.
 		{true, false, drawn, drawn, true, .Compositor, false},
-		{true, false, drawn + 1, drawn, false, .Next_Frame, true},
+		{true, false, drawn + 1, drawn, false, .Draw_Now, true},
 	}
 	for item, index in cases {
 		wait, due := picture_wait_choose(item.measure, item.changed_with_no_record, item.activity_seen, item.activity_drawn, item.compositor_holds_canvas)

@@ -83,6 +83,12 @@ window_resize_step :: proc(machine: ^Machine, step: Step, index: int) -> bool {
 	screen_pixels_width, screen_pixels_height, known := screen_size_of_log(log)
 	screen_width, _ := logical_place_of_screen(screen_pixels_width, MACHINE_SCALE)
 	screen_height, _ := logical_place_of_screen(screen_pixels_height, MACHINE_SCALE)
+	if known && target_x < 0 {
+		// Fall back to the bottom-right corner when the window sits too close
+		// to the left edge for a bottom-left outward drag to stay on screen.
+		corner_x = frame.right - 1
+		target_x = corner_x + (step.to_x - width)
+	}
 	if !known || target_x < 0 || target_y < 0 || target_x >= screen_width || target_y >= screen_height {
 		fmt.eprintfln("modustool: test failed: step %d: the corner of the window %s at %d,%d would go to %d,%d, which is not on the screen of %dx%d", index + 1, step.text, corner_x, corner_y, target_x, target_y, screen_width, screen_height)
 		return false
@@ -95,15 +101,24 @@ window_resize_step :: proc(machine: ^Machine, step: Step, index: int) -> bool {
 		return false
 	}
 	pointer_button(machine, false) or_return
-	wanted := fmt.tprintf("compositor: window %s resized from %dx%d to %dx%d", step.text, width, height, step.to_x, step.to_y)
+	// Live resize can emit intermediate Window_Resized records during the drag
+	// before settling on the final target size.
+	wanted_prefix := fmt.tprintf("compositor: window %s resized from ", step.text)
+	wanted_suffix := fmt.tprintf(" to %dx%d", step.to_x, step.to_y)
 	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
-		if len(text) > before && strings.contains(text[before:], wanted) {
-			foundation.test_passed_print("the window %s is %dx%d: its process drew the new size", step.text, step.to_x, step.to_y)
-			return true
+		if len(text) > before {
+			slice := text[before:]
+			for line in strings.split_lines_iterator(&slice) {
+				trimmed := strings.trim_right(line, "\r")
+				if strings.contains(trimmed, wanted_prefix) && strings.has_suffix(trimmed, wanted_suffix) {
+					foundation.test_passed_print("the window %s is %dx%d: its process drew the new size", step.text, step.to_x, step.to_y)
+					return true
+				}
+			}
 		}
 		log_change_wait(machine)
 	}
-	fmt.eprintfln("modustool: test failed: step %d: the log does not have \"%s\" within %v", index + 1, wanted, foundation.HANG_BOUND)
+	fmt.eprintfln("modustool: test failed: step %d: the log does not have \"%s...%s\" within %v", index + 1, wanted_prefix, wanted_suffix, foundation.HANG_BOUND)
 	return false
 }

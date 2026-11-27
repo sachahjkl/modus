@@ -91,7 +91,7 @@ resize_edges_at_refuses_each_place_that_is_no_edge :: proc(t: ^testing.T) {
 		{outer.x + CORNER_REACH - 1, bottom - CORNER_REACH}, // The bottom left corner has no square inside the frame.
 		{outer.x + BORDER_OF_TEST, bottom - BORDER_OF_TEST - 1}, // Its pixel nearest to the corner inside the frame.
 		{right - CORNER_REACH, outer.y + CORNER_REACH - 1}, // The top corners have no square: the buttons of the title.
-		{outer.x + CORNER_REACH - 1, outer.y + 1},
+		{outer.x + CORNER_REACH - 1, outer.y + BORDER_OF_TEST}, // First row of the title bar below the top border.
 	}
 	for place in no_edge {
 		edges := resize_edges_at(outer, BORDER_OF_TEST, place[0], place[1])
@@ -116,6 +116,8 @@ resize_edges_at_each_edge_and_corner :: proc(t: ^testing.T) {
 		{middle_x, bottom - 1, {.Bottom}},
 		{middle_x, bottom + RESIZE_REACH - 1, {.Bottom}},
 		{middle_x, outer.y - 1, {.Top}},
+		{middle_x, outer.y, {.Top}}, // Top border inside the frame also triggers top resize.
+		{middle_x, outer.y + BORDER_OF_TEST - 1, {.Top}},
 		{middle_x, outer.y - RESIZE_REACH, {.Top}},
 		{right - 1, bottom - 1, {.Right, .Bottom}},
 		{right + RESIZE_REACH - 1, bottom + RESIZE_REACH - 1, {.Right, .Bottom}},
@@ -442,4 +444,101 @@ resized_window_place_is_kept_on_screen :: proc(t: ^testing.T) {
 		title_end := x + frame.outer_width - frame.border - frame.close_size
 		testing.expectf(t, y >= HEIGHT && title_end >= TITLE_KEPT && x <= SCREEN_WIDTH_OF_TEST - TITLE_KEPT, "the place %v gives %d,%d", place, x, y)
 	}
+}
+
+// Live resize coalesces intermediate pointer moves while one request is in
+// flight, issues the next size immediately when the previous surface settles,
+// applies the exact final size after an early release, backs off on a declined
+// size until the pointer moves to a different size, and clears cleanly on cancel.
+@(test)
+live_resize_drag_coalesces_and_respects_declines :: proc(t: ^testing.T) {
+	state: Live_Resize_Drag
+	// Refusal / no-op before begin.
+	testing.expect(t, !live_resize_move(&state, 900, 500, 800, 400, false).ask)
+	testing.expect(t, !live_resize_release(&state, 900, 500, 800, 400, false).ask)
+	testing.expect(t, !live_resize_settled(&state, 800, 400, false).ask)
+
+	// Start drag at 800x400; moving to the same size asks nothing.
+	live_resize_begin(&state, {.Right, .Bottom}, 100, 80, 800, 400)
+	testing.expect(t, state.anchor_valid && state.anchor_right == 900 && state.anchor_bottom == 480)
+	testing.expect(t, !live_resize_move(&state, 800, 400, 800, 400, false).ask)
+
+	// First move while idle asks immediately.
+	ask := live_resize_move(&state, 840, 420, 800, 400, false)
+	testing.expect(t, ask.ask && ask.width == 840 && ask.height == 420 && ask.edges == {.Right, .Bottom})
+
+	// While busy, multiple moves coalesce to the newest target without asking.
+	testing.expect(t, !live_resize_move(&state, 860, 430, 800, 400, true).ask)
+	testing.expect(t, !live_resize_move(&state, 900, 460, 800, 400, true).ask)
+	testing.expect(t, !live_resize_settled(&state, 840, 420, true).ask)
+
+	// Once the 840x420 surface settles, the coalesced 900x460 target asks at once.
+	ask = live_resize_settled(&state, 840, 420, false)
+	testing.expect(t, ask.ask && ask.width == 900 && ask.height == 460 && ask.edges == {.Right, .Bottom})
+
+	// If 900x460 is declined (e.g. No_Budget), re-moving or settling at 900x460 does not spam.
+	live_resize_declined(&state, 900, 460)
+	testing.expect(t, !live_resize_move(&state, 900, 460, 840, 420, false).ask)
+	testing.expect(t, !live_resize_settled(&state, 840, 420, false).ask)
+
+	// Moving to a different size clears decline backoff and resumes live resize.
+	ask = live_resize_move(&state, 880, 440, 840, 420, false)
+	testing.expect(t, ask.ask && ask.width == 880 && ask.height == 440)
+
+	// Releasing while 880x440 is in flight with a final target 920x480 queues final_due
+	// and preserves the drag anchor until the final commit settles.
+	testing.expect(t, !live_resize_release(&state, 920, 480, 840, 420, true).ask)
+	testing.expect(t, state.anchor_valid)
+	ask = live_resize_settled(&state, 880, 440, false)
+	testing.expect(t, ask.ask && ask.width == 920 && ask.height == 480 && ask.edges == {.Right, .Bottom})
+	testing.expect(t, state.anchor_valid)
+	// Second settle after reaching final size asks nothing and clears the anchor.
+	testing.expect(t, !live_resize_settled(&state, 920, 480, false).ask)
+	testing.expect(t, !state.anchor_valid)
+
+	// Cancel clears active, anchor, and pending final state completely.
+	live_resize_begin(&state, {.Left, .Top}, 100, 80, 920, 480)
+	_ = live_resize_release(&state, 700, 350, 920, 480, true)
+	live_resize_cancel(&state)
+	testing.expect(t, !state.anchor_valid && !live_resize_settled(&state, 920, 480, false).ask)
+
+	// Nil state is a safe no-op everywhere.
+	live_resize_begin(nil, {.Right}, 0, 0, 800, 400)
+	live_resize_cancel(nil)
+	live_resize_declined(nil, 800, 400)
+	testing.expect(t, !live_resize_move(nil, 900, 500, 800, 400, false).ask)
+	testing.expect(t, !live_resize_release(nil, 900, 500, 800, 400, false).ask)
+	testing.expect(t, !live_resize_settled(nil, 800, 400, false).ask)
+
+	// Releasing while idle with final == shown asks nothing; with final != shown asks at once.
+	live_resize_begin(&state, {.Right}, 100, 80, 800, 400)
+	testing.expect(t, !live_resize_release(&state, 800, 400, 800, 400, false).ask)
+	testing.expect(t, !state.anchor_valid)
+	live_resize_begin(&state, {.Right}, 100, 80, 800, 400)
+	ask = live_resize_release(&state, 860, 400, 800, 400, false)
+	testing.expect(t, ask.ask && ask.width == 860 && ask.height == 400 && ask.edges == {.Right} && state.anchor_valid)
+
+	// Releasing on a declined size asks nothing and clears final_due.
+	live_resize_begin(&state, {.Bottom}, 100, 80, 800, 400)
+	_ = live_resize_move(&state, 800, 900, 800, 400, false)
+	live_resize_declined(&state, 800, 900)
+	testing.expect(t, !live_resize_release(&state, 800, 900, 800, 400, false).ask)
+	testing.expect(t, !state.final_due && !state.anchor_valid)
+
+	// Declining an in-flight resize while final_due holds a different target keeps final_due
+	// so live_resize_settled dispatches that target immediately.
+	live_resize_begin(&state, {.Right, .Bottom}, 100, 80, 800, 400)
+	_ = live_resize_move(&state, 1600, 900, 800, 400, false)
+	testing.expect(t, !live_resize_release(&state, 900, 500, 800, 400, true).ask)
+	live_resize_declined(&state, 1600, 900)
+	ask = live_resize_settled(&state, 800, 400, false)
+	testing.expect(t, ask.ask && ask.width == 900 && ask.height == 500 && ask.edges == {.Right, .Bottom})
+	testing.expect(t, !live_resize_settled(&state, 900, 500, false).ask)
+	testing.expect(t, !state.anchor_valid)
+
+	// Settling at a size that already matches final_due clears final_due and anchor without asking again.
+	live_resize_begin(&state, {.Right}, 100, 80, 800, 400)
+	_ = live_resize_release(&state, 850, 400, 800, 400, true)
+	testing.expect(t, !live_resize_settled(&state, 850, 400, false).ask)
+	testing.expect(t, !state.final_due && !state.anchor_valid)
 }

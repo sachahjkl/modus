@@ -153,7 +153,6 @@ VALUE_PIXELS_PER_LINE :: 2
 VALUE_FORMAT :: 3
 FORMAT_RED_FIRST :: 2 // boot_info.Pixel_Format.Red_Green_Blue_X
 
-FRAME_INTERVAL :: 16 // Milliseconds.
 BAR_HEIGHT :: bar.HEIGHT
 // The frame of a window: a title bar over the surface, and a border of
 // BORDER pixels at the left, the right and the bottom. The machine test
@@ -164,6 +163,8 @@ BORDER :: 2
 // the square of the corner holds the grip and the border beside it.
 #assert(bar.CORNER_REACH >= bar.GRIP_SIZE + BORDER)
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
+TITLE_CTRL_PITCH :: 28 // Width of the Minimize and Maximize titlebar buttons.
+TITLE_CTRL_MIN_LEFT :: 40 // Room reserved on the left for the icon and title before Minimize/Maximize appear.
 TITLE_ICON_X :: 8 // The icon of the module in the title bar, from the corner of the frame.
 TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
 CLIENT_CAPACITY :: bar.WINDOW_CAPACITY // The windows of the desktop at one time.
@@ -286,6 +287,7 @@ Client :: struct {
 	// asks a clamp again at most CLAMP_ASKS_MOST times (window_resize.odin).
 	clamp_asks: int,
 	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
+	live_resize:  bar.Live_Resize_Drag, // Coalesced 1-in-flight live resize state during and right after an edge drag.
 	// The size of the surface that the window opened with, or that the
 	// principal asked last and the window took: the fit to the work area
 	// starts from it, so a clamped window gets it back when the work area
@@ -916,7 +918,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		settings_count_told = u64(first_choice.change_count)
 	}
 
-	next_frame: u64
 	shown_second: u64
 	compositor_wait_set = system.wait_set_of(compositor_wait_words[:], compositor_wait_parts[:])
 	for {
@@ -934,7 +935,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		powerbox_picker_wait(&wait)
 		plan_difference_reading_wait(&wait) // powerbox_dialog.odin
 		window_events_wait(&wait) // window_events.odin
-		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
+		// Pace frames by display readiness (src/md/infrastructure/whole_frame.md):
+		// draw immediately when damaged unless a VirtIO-GPU scanout present is in flight.
+		draw_ready := damage_count > 0 && !(gpu_attached && gpu_in_flight)
+		deadline := draw_ready ? u64(0) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
 		}
@@ -1104,6 +1108,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// input and the other windows. The records that come during
 			// the turn end the next wait at once.
 			taken := false
+			took_present := false
 			for _ in 0 ..< system.records_of_turn(&client.ring.commands) {
 				record := system.receive(&client.ring.commands) or_break
 				taken = true
@@ -1119,6 +1124,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 					client.commands_refused += 1
 					continue
+				}
+				if command == .Present {
+					took_present = true
 				}
 				switch command {
 				case .None:
@@ -1226,6 +1234,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// that this loop read until now. No frame is drawn between
 			// the record and this wake.
 			if taken && client.ring.head != nil {
+				if took_present && gpu_attached && gpu_in_flight {
+					gpu_frames_merged += 1
+				}
 				system.wake_writer(&client.ring.commands)
 			}
 		}
@@ -1248,13 +1259,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wide_grant_counts_tick(now) // wide_grant_screen.odin
 			}
 		}
-		if browser_resize_poll() {
-			next_frame = 0
-		}
-		if damage_count > 0 && now >= next_frame {
+		_ = browser_resize_poll()
+		if damage_count > 0 && !(gpu_attached && gpu_in_flight) {
 			draw(now)
 			browser_resize_ack_after_frame()
-			next_frame = now + FRAME_INTERVAL
 			frames += 1
 			if frames == 1 {
 				system.log_fact(.Info, First_Frame{})
@@ -1462,6 +1470,7 @@ window_leave :: proc "contextless" (index: int) {
 			resize_outline_damage()
 			resizing = -1
 		}
+		bar.live_resize_cancel(&client.live_resize)
 		keyboard_window_gone(index) // keyboard_desktop.odin
 		pointer_lock_window_closed(index) // pointer_lock.odin
 		damage_window(client)
@@ -1852,6 +1861,25 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		if was_open != .None || bar.inside_bar(bar_layout, pointer_y) {
 			return
 		}
+		// Titlebar buttons (Close, Maximize, Minimize) take priority over the
+		// top resize border so clicking the top 2 px of a button activates the
+		// button instead of starting a resize drag.
+		if position := window_position_at(pointer_x, pointer_y); position >= 0 {
+			hit_client := &clients[order[position]]
+			if btn := title_button_at(hit_client, pointer_x, pointer_y); btn != .None {
+				raise(position)
+				switch btn {
+				case .None:
+				case .Close:
+					system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(hit_client.ring_memory)}})
+				case .Maximize:
+					_ = desktop_toggle_maximize(hit_client)
+				case .Minimize:
+					desktop_toggle_minimize(hit_client)
+				}
+				return
+			}
+		}
 		// An edge of a resizable window, before the window under the
 		// pointer: the band of an edge lies outside the frame.
 		if index, edges := resize_edges_under_pointer(); edges != {} {
@@ -1861,25 +1889,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		if position := window_position_at(pointer_x, pointer_y); position >= 0 {
 			client := &clients[order[position]]
 			csd := client.decoration == .Client
-			outer_width, _ := window_outer_size(client)
 			client_index := order[position]
 			raise(position)
 			if !csd {
-				close_x := client.x + outer_width - BORDER - CLOSE_SIZE
-				max_x := close_x - 28
-				min_x := max_x - 28
-				if inside(pointer_x, pointer_y, close_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
-					system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(client.ring_memory)}})
-					return
-				}
-				if inside(pointer_x, pointer_y, max_x, client.y, 28, TITLE_HEIGHT) {
-					_ = desktop_toggle_maximize(client)
-					return
-				}
-				if inside(pointer_x, pointer_y, min_x, client.y, 28, TITLE_HEIGHT) {
-					desktop_toggle_minimize(client)
-					return
-				}
 				if pointer_y < client.y + TITLE_HEIGHT {
 					title_double_press = last_title_press
 					if bar.double_press_take(&title_double_press, system.time(), pointer_x, pointer_y, client_index) {
@@ -1914,6 +1926,36 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 		client.pointer_over = on_surface || (buttons != 0 && client.pointer_over)
 	}
+}
+
+// Title_Button names the server-side titlebar action buttons.
+Title_Button :: enum u8 {
+	None,
+	Minimize,
+	Maximize,
+	Close,
+}
+
+// title_button_at returns which visible titlebar button holds (px, py), matching
+// the exact geometry and narrow-window visibility rules of frame_records.
+title_button_at :: proc "contextless" (client: ^Client, px, py: int) -> Title_Button {
+	if client == nil || client.decoration == .Client {
+		return .None
+	}
+	outer_width, _ := window_outer_size(client)
+	close_x := client.x + outer_width - BORDER - CLOSE_SIZE
+	max_x := close_x - TITLE_CTRL_PITCH
+	min_x := max_x - TITLE_CTRL_PITCH
+	if inside(px, py, close_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+		return .Close
+	}
+	if max_x > client.x + TITLE_CTRL_MIN_LEFT && inside(px, py, max_x, client.y, TITLE_CTRL_PITCH, TITLE_HEIGHT) {
+		return .Maximize
+	}
+	if min_x > client.x + TITLE_CTRL_MIN_LEFT && inside(px, py, min_x, client.y, TITLE_CTRL_PITCH, TITLE_HEIGHT) {
+		return .Minimize
+	}
+	return .None
 }
 
 // window_outer_size gives the size of a window with its frame: the surface
@@ -2586,14 +2628,18 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			screen_part_end(grip_first, nil, screen_rectangle_of(gx, gy, bar.GRIP_SIZE, bar.GRIP_SIZE), true, true)
 		}
 	}
-	// The outline of the frame that a drag of the edges gives, over the
-	// windows: the window keeps its picture until its process draws the
-	// new size.
+	// Guide outline during live resize: shown only while the window's shown
+	// size lags behind the live drag target (slow client or declined size),
+	// disappearing as soon as the window catches up even if screen clamping
+	// shifted client.x/client.y.
 	if resizing >= 0 {
-		first := table.record_count
-		outline := resize_outline
-		interface.draw_outline(table, outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top, RESIZE_OUTLINE_THICKNESS, graphics.colors.title)
-		screen_part_end(first, nil, screen_rectangle_of(outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top), true, true)
+		resizing_client := &clients[resizing]
+		if resizing_client.live_resize.target_width != resizing_client.width || resizing_client.live_resize.target_height != resizing_client.height {
+			first := table.record_count
+			outline := resize_outline
+			interface.draw_outline(table, outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top, RESIZE_OUTLINE_THICKNESS, graphics.colors.title)
+			screen_part_end(first, nil, screen_rectangle_of(outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top), true, true)
+		}
 	}
 	keyboard_first := table.record_count
 	if keyboard_box, keyboard_drawn := keyboard_window_records(table); keyboard_drawn { // keyboard_desktop.odin

@@ -207,7 +207,8 @@ keyboard_window_end :: proc "contextless" (keep: bool) {
 	case .Move:
 		system.log_fact(.Info, Window_Moved{x = u64(max(client.x, 0)), y = u64(client.y), window = window_field(client.title[:])})
 	case .Resize:
-		// One request at a time, as at the release of a drag.
+		// One request at a time, superseding any queued post-drag live target.
+		bar.live_resize_cancel(&client.live_resize)
 		if window_size_ask(client, keyboard_resize_width, keyboard_resize_height, {.Right, .Bottom}) { // window_resize.odin
 			window_unmaximize_on_resize(client)
 		}

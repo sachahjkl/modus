@@ -13,15 +13,16 @@ import "modus:system"
 
 // The windows that the principal resizes (src/md/features/window_resize.md).
 //
-// A process declares its window resizable with Resizable. The principal
-// drags an edge or a corner; the compositor draws the outline of the new
-// frame, and at the release sends the event Resized and keeps the size that
-// it asked. The process answers once: Surface_Resize with a surface of that
-// size, made with its own budget, or Resize_Declined. The window keeps its
-// old surface until the first Present after a Surface_Resize: the loop of
-// the compositor never waits for the process, and the screen never shows a
-// size that the process did not draw. A process cannot change the size of
-// its window when the principal did not ask for it.
+// A process declares its window resizable with Resizable. During an edge or
+// corner drag, the compositor sends Resized live (at most one request in flight
+// per window, coalescing intermediate moves) and draws the guide outline only
+// while the window lags behind the dragged target. The process answers once:
+// Surface_Resize with a surface of that size, made with its own budget, or
+// Resize_Declined. The window keeps its old surface until the first Present
+// after a Surface_Resize: the loop of the compositor never waits for the
+// process, and the screen never shows a size that the process did not draw. A
+// process cannot change the size of its window when the principal did not ask
+// for it.
 
 
 // resizable_take takes the record Resizable of a window: its size limits,
@@ -63,13 +64,21 @@ resizable_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 	serial := record.values[3]
 	refused :: proc "contextless" (client: ^Client, serial: u64) {
-		was_clamp := client.resize_asked && client.resize_asked_clamp
+		was_asked := client.resize_asked
+		was_clamp := was_asked && client.resize_asked_clamp
+		declined_w, declined_h := client.resize_asked_width, client.resize_asked_height
 		client.resizes_refused += 1
 		client.resize_asked, client.resize_edges = false, {}
+		if was_asked {
+			bar.live_resize_declined(&client.live_resize, declined_w, declined_h)
+		}
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Refused), 1 = serial})
 		desktop_restore_size_after_answer(client) // desktop_features.odin
 		_ = window_scale_step(client) // scale.odin: the end of a fit request
 		clamp_ask_again(client, was_clamp)
+		if was_asked {
+			live_resize_follow_up(client)
+		}
 	}
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor. A number with no proof of this process is neither used
@@ -210,11 +219,14 @@ resize_declined_take :: proc "contextless" (client: ^Client) {
 		return
 	}
 	was_clamp := client.resize_asked_clamp
+	declined_w, declined_h := client.resize_asked_width, client.resize_asked_height
 	client.resize_asked, client.resize_edges = false, {}
+	bar.live_resize_declined(&client.live_resize, declined_w, declined_h)
 	system.log_fact(.Info, Window_Keeps_Size{width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	desktop_restore_size_after_answer(client) // desktop_features.odin
 	_ = window_scale_step(client) // scale.odin: the end of a fit request
 	clamp_ask_again(client, was_clamp)
+	live_resize_follow_up(client)
 }
 
 // CLAMP_ASKS_MOST bounds the asks of a clamp that end with no new surface,
@@ -264,10 +276,20 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 	width, height := client.resize_logical_width, client.resize_logical_height
 	client.surface_scale, client.surface_serial, client.released = client.resize_scale, client.resize_serial, false
 	if .Left in client.resize_pending_edges {
-		client.x += old_width - width
+		// Anchor from the drag start across live and post-release commits so
+		// an intermediate window_place_kept clamp never shifts the right edge.
+		if client.live_resize.anchor_valid {
+			client.x = client.live_resize.anchor_right - width
+		} else {
+			client.x += old_width - width
+		}
 	}
 	if .Top in client.resize_pending_edges {
-		client.y += old_height - height
+		if client.live_resize.anchor_valid {
+			client.y = client.live_resize.anchor_bottom - height
+		} else {
+			client.y += old_height - height
+		}
 	}
 	client.resize_pending_edges = {}
 	client.surface = {pixels = client.pictures, width = client.resize_width, height = client.resize_height, stride = client.resize_width}
@@ -288,6 +310,8 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 	desktop_restore_size_after_answer(client) // desktop_features.odin
 	// A fit that grows the window waits for this surface at the new scale.
 	window_fit_after_scale(client) // scale.odin
+	// Continue an active live resize drag or apply a final size queued at release.
+	live_resize_follow_up(client)
 }
 
 // surface_release_take takes the record Surface_Release of a window
@@ -319,6 +343,7 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 		resize_outline_damage()
 		resizing = -1
 	}
+	bar.live_resize_cancel(&client.live_resize)
 	// A resize by keys ends the same way: the size that it shows has no
 	// surface to replace.
 	if keyboard_window_mode == .Resize {
@@ -507,8 +532,26 @@ outer_rectangle_of :: proc "contextless" (client: ^Client) -> bar.Outer_Rectangl
 	return {client.x, client.y, client.width + 2 * BORDER, client.height + TITLE_HEIGHT + BORDER}
 }
 
-// resize_begin starts a drag of the edges of a window: it comes to the
-// front, and the outline of its frame shows.
+// client_resize_busy reports whether a window already has a resize request,
+// pending surface, or surface release in flight.
+client_resize_busy :: proc "contextless" (client: ^Client) -> bool {
+	return client.resize_asked || client.resize_pictures != nil || client.released
+}
+
+// live_resize_follow_up sends the newest coalesced live drag target or queued
+// post-release final target as soon as an in-flight resize surface is shown.
+live_resize_follow_up :: proc "contextless" (client: ^Client) {
+	if resizing >= 0 && &clients[resizing] == client {
+		resize_outline_damage()
+	}
+	ask := bar.live_resize_settled(&client.live_resize, client.width, client.height, client_resize_busy(client))
+	if ask.ask && window_size_ask(client, ask.width, ask.height, ask.edges) {
+		window_unmaximize_on_resize(client)
+	}
+}
+
+// resize_begin starts a live drag of the edges of a window: it comes to the
+// front and begins tracking coalesced live resize targets.
 resize_begin :: proc "contextless" (index: int, edges: bar.Resize_Edges) {
 	for position in 0 ..< order_count {
 		if order[position] == index {
@@ -520,7 +563,7 @@ resize_begin :: proc "contextless" (index: int, edges: bar.Resize_Edges) {
 	resizing = index
 	resize_start = {edges = edges, pointer_x = pointer_x, pointer_y = pointer_y, x = client.x, y = client.y, width = client.width, height = client.height}
 	resize_outline = {client.x, client.y, client.x + client.width + 2 * BORDER, client.y + client.height + TITLE_HEIGHT + BORDER}
-	resize_outline_damage()
+	bar.live_resize_begin(&client.live_resize, edges, client.x, client.y, client.width, client.height)
 }
 
 // window_unmaximize_on_resize clears the maximized state once a resize drag or
@@ -537,10 +580,10 @@ window_unmaximize_on_resize :: proc "contextless" (client: ^Client) {
 }
 
 // resize_pointer_moved follows the pointer while it holds the edges of a
-// window. While the button is down, the outline moves. At the release the
-// outline goes, and the process gets the event Resized when the size
-// differs: no surface is made during the drag. The compositor keeps the
-// asked size until the answer.
+// window. While held, it asks the process live (at most one request in flight,
+// coalescing intermediate moves) and draws the guide outline only while the
+// window lags behind the dragged target. At release, any remaining final target
+// is sent immediately or queued until the in-flight surface lands.
 resize_pointer_moved :: proc "contextless" (held: bool) {
 	client := &clients[resizing]
 	x, y, width, height := bar.resize_drag(resize_start, pointer_x, pointer_y, size_range_of(client), 2 * BORDER, TITLE_HEIGHT + BORDER, desktop_width, desktop_height)
@@ -551,11 +594,16 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 			resize_outline = outline
 			resize_outline_damage()
 		}
+		ask := bar.live_resize_move(&client.live_resize, width, height, client.width, client.height, client_resize_busy(client))
+		if ask.ask && window_size_ask(client, ask.width, ask.height, ask.edges) {
+			window_unmaximize_on_resize(client)
+		}
 		return
 	}
 	resize_outline_damage()
 	resizing = -1
-	if window_size_ask(client, width, height, resize_start.edges) {
+	ask := bar.live_resize_release(&client.live_resize, width, height, client.width, client.height, client_resize_busy(client))
+	if ask.ask && window_size_ask(client, ask.width, ask.height, ask.edges) {
 		window_unmaximize_on_resize(client)
 	}
 }
@@ -615,6 +663,9 @@ window_frame_take :: proc "contextless" (client: ^Client, x, y, outer_width, out
 // can cut. The top left corner stays where it is when the new surface
 // comes, so the window fills the frame that it asked.
 window_place_and_size_take :: proc "contextless" (client: ^Client, x, y, width, height: int) {
+	// An explicit maximize, restore, snap, or scale fit supersedes any queued
+	// post-drag live resize target.
+	bar.live_resize_cancel(&client.live_resize)
 	damage_window(client)
 	client.x, client.y = x, y
 	damage_window(client)

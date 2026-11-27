@@ -184,11 +184,11 @@ Do not use: header, caption, decoration.
 
 A resizable window is a window whose process states its size limits, so that the principal can drag its edges to give it another size.
 
-A window is fixed unless its process calls `display.resizable_set` with the least and the largest size of its surface. The principal then drags an edge or a corner; at the release the process gets the event `Resized`, makes the surface of the new size with its own budget (`display.surface_resize`), and draws its next frame in it. The compositor shows the old surface until that frame. A resizable window is not a stretched picture: the compositor never scales the pixels of a process.
+A window is fixed unless its process calls `display.resizable_set` with its size limits. When the principal drags an edge or a corner, the compositor sends coalesced `Resized` events (at most one in flight per window). The process allocates each new surface from its own budget (`display.surface_resize`) and draws its next frame. The compositor keeps the previous surface until that frame and never stretches a window's pixels.
 
 The design: `src/md/features/window_resize.md`.
 
-Do not use: live resize, size hint, stretchable window.
+Do not use: size hint, stretchable window.
 
 ### Clipboard
 
