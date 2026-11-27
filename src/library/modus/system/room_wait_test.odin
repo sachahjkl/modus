@@ -79,3 +79,38 @@ the_room_for_records_at_its_edges :: proc(t: ^testing.T) {
 	wait_room_for(&wait, queue, 1)
 	testing.expect(t, !wait.full, "a full queue: the writer waits")
 }
+
+// Even when another wait entry sets wait.full = true, wait_take_other_wake
+// still sees and claims once the peer waits flag recorded on earlier queue
+// entries so wait_end never leaves a writer or reader stalled.
+@(test)
+wait_take_other_wake_claims_peer_flag_once_when_wait_is_full :: proc(t: ^testing.T) {
+	mem1 := make([]u64, ring.PAGE_COUNT * ring.PAGE_SIZE / size_of(u64))
+	mem2 := make([]u64, ring.PAGE_COUNT * ring.PAGE_SIZE / size_of(u64))
+	defer delete(mem1)
+	defer delete(mem2)
+	r1 := room_ring_of(t, mem1)
+	r2 := room_ring_of(t, mem2)
+	q1 := &r1.commands
+	q2 := &r2.commands
+	q1.counters.writer_waits = 1
+
+	wait: Wait
+	testing.expect(t, wait_records(&wait, q1))
+	wait_room_for(&wait, q2, 1)
+	testing.expect(t, wait.full, "empty q2 has room, setting wait.full")
+	testing.expect_value(t, wait.count, 1)
+
+	word, wake := wait_take_other_wake(wait.inline_parts[0])
+	testing.expect(t, wake)
+	testing.expect_value(t, word, &q1.counters.read)
+	testing.expect_value(t, q1.counters.writer_waits, u32(0))
+
+	word2, wake2 := wait_take_other_wake(wait.inline_parts[0])
+	testing.expect(t, !wake2)
+	testing.expect_value(t, word2, (^u32)(nil))
+
+	word3, wake3 := wait_take_other_wake(Wait_Part{})
+	testing.expect(t, !wake3)
+	testing.expect_value(t, word3, (^u32)(nil))
+}

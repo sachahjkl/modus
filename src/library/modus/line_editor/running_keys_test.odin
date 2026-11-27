@@ -155,47 +155,59 @@ model_line_thread_step :: proc(model: ^Model) {
 	}
 }
 
+model_completed_line_finish :: proc(model: ^Model) -> bool {
+	if !model.running || model.finished != model.started {
+		return false
+	}
+	model.running = false
+	for !model.running {
+		key := waiting_keys_take_first(&model.waiting) or_break
+		model_key(model, key)
+	}
+	return true
+}
+
 // model_first_thread_turn is one turn of the loop of the console.
 model_first_thread_turn :: proc(model: ^Model) {
 	for {
-		// One read of the line for this key: the two decisions use it.
-		line := Running_Line{runs = model.running, call_stoppable = model.call_stoppable, stop_asked = model.stop_asked}
-		if !running_key_can_be_taken(line, model.waiting.count, MODEL_WAITING_CAPACITY) {
-			break
+		for {
+			_ = model_completed_line_finish(model)
+			// One read of the line for this key: the two decisions use it.
+			line := Running_Line{runs = model.running, call_stoppable = model.call_stoppable, stop_asked = model.stop_asked}
+			if !running_key_can_be_taken(line, model.waiting.count, MODEL_WAITING_CAPACITY) {
+				break
+			}
+			key := model_queue_pop(model) or_break
+			// The other thread runs between the read and the action: the call
+			// can end here.
+			if model_next(&model.generator, 2) == 0 {
+				model_line_thread_step(model)
+			}
+			if !line.runs {
+				model_key(model, key)
+				continue
+			}
+			switch running_key_action(key.escape, line, model.waiting.count, MODEL_WAITING_CAPACITY) {
+			case .Stop_Call:
+				model.stop_asked = true
+			case .Wait:
+				waiting_keys_add(&model.waiting, key)
+			case .Drop:
+				model.dropped += 1
+				if key.escape {
+					model.escapes_dropped += 1
+				}
+				// The read that took the key said that no Escape could act:
+				// the key could have stayed in the queue.
+				if !line.call_stoppable || line.stop_asked {
+					model.drops_that_could_stay += 1
+				}
+			}
 		}
-		key := model_queue_pop(model) or_break
-		// The other thread runs between the read and the action: the call
-		// can end here.
-		if model_next(&model.generator, 2) == 0 {
-			model_line_thread_step(model)
-		}
-		if !line.runs {
-			model_key(model, key)
+		if model_completed_line_finish(model) && !model.running {
 			continue
 		}
-		switch running_key_action(key.escape, line, model.waiting.count, MODEL_WAITING_CAPACITY) {
-		case .Stop_Call:
-			model.stop_asked = true
-		case .Wait:
-			waiting_keys_add(&model.waiting, key)
-		case .Drop:
-			model.dropped += 1
-			if key.escape {
-				model.escapes_dropped += 1
-			}
-			// The read that took the key said that no Escape could act:
-			// the key could have stayed in the queue.
-			if !line.call_stoppable || line.stop_asked {
-				model.drops_that_could_stay += 1
-			}
-		}
-	}
-	if model.running && model.finished == model.started {
-		model.running = false
-		for !model.running {
-			key := waiting_keys_take_first(&model.waiting) or_break
-			model_key(model, key)
-		}
+		break
 	}
 }
 
@@ -306,4 +318,41 @@ waiting_keys_keep_their_order_and_refuse_past_the_capacity :: proc(t: ^testing.T
 		testing.expect_value(t, key, expected)
 	}
 	testing.expect_value(t, waiting.count, 0)
+}
+
+// When a line has already finished before the first thread drains a burst
+// longer than MODEL_WAITING_CAPACITY, retiring the finished line before taking
+// keys prevents drops and ensures Enter runs in the same turn instead of
+// staying in the terminal ring.
+@(test)
+line_that_ends_before_long_burst_runs_enter_in_one_turn :: proc(t: ^testing.T) {
+	model := Model{
+		generator = {1},
+		running   = true,
+		started   = 1,
+		finished  = 1,
+		done      = 1,
+	}
+	model.edit = make([dynamic]u8, context.temp_allocator)
+	model.entered = make([dynamic]string, context.temp_allocator)
+	model.ran = make([dynamic]string, context.temp_allocator)
+
+	// Queue holds MODEL_WAITING_CAPACITY + 2 characters plus Enter: more than
+	// the waiting buffer can hold if running were still treated as true.
+	line_text := "abcdef"
+	for ch in line_text {
+		model.queue[model.queue_written % MODEL_QUEUE_CAPACITY] = Model_Key{character = ch}
+		model.queue_written += 1
+	}
+	model.queue[model.queue_written % MODEL_QUEUE_CAPACITY] = Model_Key{enter = true}
+	model.queue_written += 1
+
+	model_first_thread_turn(&model)
+	testing.expect_value(t, model.dropped, 0)
+	testing.expect_value(t, model.queue_read, model.queue_written)
+	testing.expect_value(t, len(model.entered), 1)
+	if len(model.entered) == 1 {
+		testing.expect_value(t, model.entered[0], line_text)
+	}
+	testing.expect(t, model.running)
 }

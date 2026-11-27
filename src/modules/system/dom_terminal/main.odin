@@ -61,7 +61,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (src/md/features/module_budget_request.md, "The first state of work").
 	system.ready()
 	for {
-		terminal_records.serial_port_poll(&serial_port, &terminal_ring)
+		poll := terminal_records.serial_port_poll(&serial_port, &terminal_ring)
 		for record in system.receive(&terminal_ring.commands) {
 			event := terminal_records.renderer_intake_take(&intake, record)
 			line = dom_protocol.line_make(line_buffer[:])
@@ -81,6 +81,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		wait := system.wait_begin()
 		system.wait_records(&wait, &terminal_ring.commands)
+		if poll.ring_full {
+			system.wait_room_for(&wait, &terminal_ring.completions, poll.room_needed)
+		} else if poll.more_input {
+			wait.full = true
+		}
 		_ = system.wait_end(&wait, system.time() + 20)
 	}
 }

@@ -327,10 +327,47 @@ wait_spin :: proc "contextless" (wait: ^Wait) -> bool {
 	return false
 }
 
+// wait_take_other_wake checks whether a queue peer set its waits flag and
+// claims that wake once. Pure atomic helper so host tests verify it.
+@(private = "package")
+wait_take_other_wake :: proc "contextless" (part: Wait_Part) -> (word: ^u32, wake: bool) {
+	if other := part.other_flag; other != nil && intrinsics.atomic_load(other) != 0 && intrinsics.atomic_exchange(other, 0) != 0 {
+		return part.other_word, true
+	}
+	return nil, false
+}
+
+// wait_wake_others wakes any peer waiting on a queue in this wait list (a
+// writer waiting for half-free room or a reader not yet woken for pushed
+// records). Called both before sleeping and on the wait.full fast path so a
+// skipped sleep never leaves a peer stalled.
+@(private = "file")
+wait_wake_others :: proc "contextless" (parts: []Wait_Part) {
+	fenced := false
+	for part in parts {
+		if part.other_flag == nil {
+			continue
+		}
+		if !fenced {
+			// StoreLoad fence: prior ring.pop and ring.push update counters
+			// with Release stores (plain MOV on x86-64). They must be visible
+			// before reading the peer's waits flag when wait.full skips
+			// atomic_store(flag, 1), or a wakeup can be missed.
+			intrinsics.atomic_thread_fence(.Seq_Cst)
+			fenced = true
+		}
+		if word, wake := wait_take_other_wake(part); wake {
+			word_wake(word, WAKE_ALL)
+		}
+	}
+}
+
 // wait_end stops the thread while each word holds its value, or until the
 // time is deadline. It gives the time.
 wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u64 {
+	parts := wait_parts(wait)
 	if wait.full {
+		wait_wake_others(parts[:wait.count])
 		return time()
 	}
 	// A list that overflowed waits on the words that it holds until its
@@ -341,7 +378,6 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 		log(.Error, "system: a wait held more words than its ", u64(len(wait_words(wait))), " places: it waits on the first ones until its deadline; its process bounds its words by wait_room_left, or gives wait_begin a wait set")
 	}
 	words := wait_words(wait)
-	parts := wait_parts(wait)
 	// A `waits` word is also a word of the wait: the thread waits while it
 	// is 1. The other side sets it to 0 before each wake. A late wake, for
 	// a record that this thread already read, can set it to 0 before this
@@ -359,14 +395,12 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 			// stop.
 			intrinsics.atomic_add(&waiters.count, 1)
 		}
-		// This thread does nothing with the queue while it waits. If the
-		// other side waits for this thread, it must continue now: a writer
-		// that waits for half of the queue, or a reader that was not told
-		// of the last records (ring.push with no wake_reader).
-		if other := parts[index].other_flag; other != nil && intrinsics.atomic_exchange(other, 0) != 0 {
-			word_wake(parts[index].other_word, WAKE_ALL)
-		}
 	}
+	// This thread does nothing with the queue while it waits. If the
+	// other side waits for this thread, it must continue now: a writer
+	// that waits for half of the queue, or a reader that was not told
+	// of the last records (ring.push with no wake_reader).
+	wait_wake_others(parts[:wait.count])
 	// The kernel reads each word again: a record that arrived before the
 	// `waits` word was set ends the wait at once. On a kernel ring that holds
 	// other records, commands_call pushes nothing and gives the time: an

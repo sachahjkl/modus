@@ -3,6 +3,7 @@
 package terminal_records
 
 import "core:testing"
+import "modus:contract/ring"
 import "modus:display"
 
 // The bytes of one key of the page of the console (browser_machine_console.html)
@@ -88,11 +89,15 @@ vt_decoder_refuses_malformed_sequences :: proc(t: ^testing.T) {
 	}
 	key, ok := vt_decode_byte(&decoder, 'A')
 	testing.expect(t, ok && key.code == display.KEY_UP)
-	// An Escape and another byte: the key Escape; the flush with no Escape
-	// gives nothing.
+	// An Escape and another byte: Escape first, then vt_decode_pending emits
+	// the follow-up byte so no key is dropped; flush with no Escape gives nothing.
 	_, _ = vt_decode_byte(&decoder, 0x1B)
 	key, ok = vt_decode_byte(&decoder, 'x')
 	testing.expect(t, ok && key.code == display.KEY_ESCAPE)
+	next_key, next_ok := vt_decode_pending(&decoder)
+	testing.expect(t, next_ok && next_key.character == 'x')
+	_, next_ok = vt_decode_pending(&decoder)
+	testing.expect(t, !next_ok)
 	_, ok = vt_flush_escape(&decoder)
 	testing.expect(t, !ok)
 }
@@ -171,4 +176,100 @@ vt_decoder_handles_arrows_ctrl_utf8_and_refuses_overlong_csi :: proc(t: ^testing
 	_, _ = vt_decode_byte(&dec, 0x1B)
 	k_esc, ok_esc := vt_flush_escape(&dec)
 	testing.expect(t, ok_esc && k_esc.code == display.KEY_ESCAPE)
+}
+
+// Escape followed immediately by Enter, another Escape+CSI, or UTF-8 never
+// drops the follow-up key.
+@(test)
+vt_decoder_preserves_follow_up_key_after_escape :: proc(t: ^testing.T) {
+	dec: Vt_Decoder
+
+	// ESC + CR -> KEY_ESCAPE then KEY_ENTER.
+	_, ok := vt_decode_byte(&dec, 0x1B)
+	testing.expect(t, !ok)
+	k1, ok1 := vt_decode_byte(&dec, '\r')
+	testing.expect(t, ok1 && k1.code == display.KEY_ESCAPE)
+	k2, ok2 := vt_decode_pending(&dec)
+	testing.expect(t, ok2 && k2.code == display.KEY_ENTER && k2.character == '\n')
+	testing.expect_value(t, dec.state, Vt_State.Ground)
+
+	// ESC + ESC + [ + A -> KEY_ESCAPE then KEY_UP.
+	_, _ = vt_decode_byte(&dec, 0x1B)
+	k1, ok1 = vt_decode_byte(&dec, 0x1B)
+	testing.expect(t, ok1 && k1.code == display.KEY_ESCAPE)
+	_, ok2 = vt_decode_pending(&dec)
+	testing.expect(t, !ok2)
+	testing.expect_value(t, dec.state, Vt_State.Escape)
+	_, ok = vt_decode_byte(&dec, '[')
+	testing.expect(t, !ok)
+	k_up, ok_up := vt_decode_byte(&dec, 'A')
+	testing.expect(t, ok_up && k_up.code == display.KEY_UP)
+	testing.expect_value(t, dec.state, Vt_State.Ground)
+
+	// ESC + UTF-8 'é' (0xC3 0xA9) -> KEY_ESCAPE then 'é'.
+	_, _ = vt_decode_byte(&dec, 0x1B)
+	k1, ok1 = vt_decode_byte(&dec, 0xC3)
+	testing.expect(t, ok1 && k1.code == display.KEY_ESCAPE)
+	_, ok2 = vt_decode_pending(&dec)
+	testing.expect(t, !ok2)
+	testing.expect_value(t, dec.state, Vt_State.Utf8)
+	k_e, ok_e := vt_decode_byte(&dec, 0xA9)
+	testing.expect(t, ok_e && k_e.character == 'é')
+	testing.expect_value(t, dec.state, Vt_State.Ground)
+}
+
+// Serial backpressure checks ring room before reading a byte from the UART:
+// 1 slot normally, 2 slots while Escape is pending, and false on a corrupt
+// read counter.
+@(test)
+serial_port_backpressure_checks_room_at_edges :: proc(t: ^testing.T) {
+	memory := make([]u64, ring.PAGE_COUNT * ring.PAGE_SIZE / size_of(u64))
+	defer delete(memory)
+	opened, ring_ok := ring.open(raw_data(memory), ring.PAGE_COUNT)
+	testing.expect(t, ring_ok)
+	queue := &opened.completions
+	capacity := ring.capacity(queue)
+
+	dec: Vt_Decoder
+	can, needed := serial_port_can_read(&dec, queue)
+	testing.expect(t, can)
+	testing.expect_value(t, needed, u32(1))
+
+	// Leave exactly 1 free slot: Ground can read, Escape cannot (needs 2).
+	for _ in 0 ..< capacity - 1 {
+		testing.expect(t, ring.push(queue, {kind = u32(Input.Key)}))
+	}
+	can, needed = serial_port_can_read(&dec, queue)
+	testing.expect(t, can)
+	testing.expect_value(t, needed, u32(1))
+
+	_, _ = vt_decode_byte(&dec, 0x1B)
+	testing.expect_value(t, dec.state, Vt_State.Escape)
+	can, needed = serial_port_can_read(&dec, queue)
+	testing.expect(t, !can)
+	testing.expect_value(t, needed, u32(2))
+
+	// Pop 1 record -> 2 free slots: Escape can read now.
+	_, popped := ring.pop(queue)
+	testing.expect(t, popped)
+	can, needed = serial_port_can_read(&dec, queue)
+	testing.expect(t, can)
+	testing.expect_value(t, needed, u32(2))
+
+	// Fill to 0 free slots: neither Ground nor Escape can read.
+	testing.expect(t, ring.push(queue, {kind = u32(Input.Key)}))
+	testing.expect(t, ring.push(queue, {kind = u32(Input.Key)}))
+	can, needed = serial_port_can_read(&dec, queue)
+	testing.expect(t, !can)
+	testing.expect_value(t, needed, u32(2))
+	_, _ = vt_flush_escape(&dec)
+	can, needed = serial_port_can_read(&dec, queue)
+	testing.expect(t, !can)
+	testing.expect_value(t, needed, u32(1))
+
+	// False read counter (read > write): refused so no byte is dropped.
+	queue.counters.read = queue.counters.write + 1
+	can, needed = serial_port_can_read(&dec, queue)
+	testing.expect(t, !can)
+	testing.expect_value(t, needed, u32(1))
 }

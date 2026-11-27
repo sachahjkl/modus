@@ -475,3 +475,93 @@ window_queue_loss_close :: proc "contextless" (queue: ^Window_Queue) -> (lost: [
 queue_is_exactly_full :: proc "contextless" (target: ^ring.Queue) -> bool {
 	return intrinsics.atomic_load_explicit(&target.counters.write, .Relaxed) - intrinsics.atomic_load_explicit(&target.counters.read, .Relaxed) == ring.capacity(target)
 }
+
+// queue_has_room says if target currently has at least one free slot according
+// to its counters. Returns false both when the ring is full and when the
+// reader wrote a false read count (write - read > capacity).
+queue_has_room :: proc "contextless" (target: ^ring.Queue) -> bool {
+	held := intrinsics.atomic_load_explicit(&target.counters.write, .Relaxed) - intrinsics.atomic_load_explicit(&target.counters.read, .Acquire)
+	return held < ring.capacity(target)
+}
+
+// What the compositor does before sleeping, for one window whose queue holds
+// waiting records.
+Window_Wait_Action :: enum u8 {
+	None         = 0, // No record waits, or the ring holds a false read count (do not spin).
+	Wait_Room    = 1, // The ring is exactly full: wait on its read counter for room.
+	Continue_Now = 2, // Records still wait and the window read concurrently during tries: run the next turn without sleeping.
+}
+
+// window_record_wait_prepare tries up to tries passes to push one priority
+// record (such as a pending Surface_Answer) into target before regular queued
+// records, and returns the wait action.
+//
+// If target was full during ring.push and the window popped a record before
+// queue_is_exactly_full ran, queue_has_room is true so the next pass pushes it
+// (or returns Continue_Now after tries passes). If the reader wrote a false
+// read count (write - read > capacity), queue_has_room is false and None is
+// returned without spinning.
+window_record_wait_prepare :: proc "contextless" (due: ^bool, record: ^ring.Record, target: ^ring.Queue, tries: int) -> (action: Window_Wait_Action, wrote: bool) {
+	if !due^ {
+		return .None, false
+	}
+	for _ in 0 ..< tries {
+		if ring.push(target, record^) {
+			due^ = false
+			record^ = {}
+			return .None, true
+		}
+		if queue_is_exactly_full(target) {
+			return .Wait_Room, false
+		}
+		if !queue_has_room(target) {
+			return .None, false
+		}
+	}
+	if !due^ {
+		return .None, false
+	}
+	if queue_is_exactly_full(target) {
+		return .Wait_Room, false
+	}
+	return queue_has_room(target) ? .Continue_Now : .None, false
+}
+
+// window_queue_wait_finish decides the wait action after drain passes.
+// Separated from window_queue_wait_prepare so host tests verify the exact
+// state where a concurrent reader freed a slot after the last pass.
+window_queue_wait_finish :: proc "contextless" (queue: ^Window_Queue, target: ^ring.Queue, wrote: bool) -> Window_Wait_Action {
+	if !window_queue_waits(queue) {
+		return .None
+	}
+	if queue_is_exactly_full(target) {
+		return .Wait_Room
+	}
+	return wrote ? .Continue_Now : .None
+}
+
+// window_queue_wait_prepare tries up to tries passes to send waiting records
+// into target before the compositor waits, and returns the wait action.
+//
+// When a window pops records concurrently while a burst larger than its ring
+// waits in queue, every pass can make progress while records still remain and
+// target is not full. Returning Continue_Now prevents the compositor from
+// sleeping until its next timer with keys (such as Enter) stranded in queue.
+// When no pass can push and target is not exactly full, the reader wrote a
+// false read count: returning None refuses to spin on a hostile client.
+window_queue_wait_prepare :: proc "contextless" (queue: ^Window_Queue, target: ^ring.Queue, tries: int) -> (action: Window_Wait_Action, wrote: bool) {
+	for _ in 0 ..< tries {
+		if !window_queue_waits(queue) {
+			return .None, wrote
+		}
+		if queue_is_exactly_full(target) {
+			return .Wait_Room, wrote
+		}
+		if window_queue_send_waiting(queue, target) {
+			wrote = true
+		} else {
+			return .None, wrote
+		}
+	}
+	return window_queue_wait_finish(queue, target, wrote), wrote
+}

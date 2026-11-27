@@ -163,7 +163,7 @@ CONSOLE_REQUEST_PAGES :: CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES + (CONSOLE_
 
 LINE_CAPACITY :: line_editor.LINE_CAPACITY
 PROMPT :: "> "
-PENDING_CAPACITY :: 128
+PENDING_CAPACITY :: 128 // Plan value: keys buffered while a line runs (docs/CONSOLE.md, "When a line ends, and the keys typed during a line").
 STATUS_INTERVAL :: 100 // Milliseconds between two texts of the time of a line.
 
 Key :: terminal.Key
@@ -307,6 +307,10 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	for {
 		seen := intrinsics.atomic_load_explicit(&changes, .Acquire)
 		for {
+			// Retire a finished line before reading the next key so keys that
+			// arrived after the line ended act immediately and never fill or
+			// overflow pending under a stale running flag.
+			_ = completed_line_finish()
 			// One read of the line for this key: the decision to take the
 			// key and the action on it use the same read. The call of the
 			// line can end between two reads, and two reads then took a
@@ -356,16 +360,11 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				}
 			}
 		}
-		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
-			running = false
-			if lost, ended := key_path.loss_end(&keys_loss); ended {
-				system.log_fact(.Info, Line_Ended_With_Lost_Keys{lost_keys = lost})
-			}
-			// The keys that waited, until one of them starts a line.
-			for !running {
-				waiting := line_editor.waiting_keys_take_first(&pending) or_break
-				key(waiting)
-			}
+		if completed_line_finish() && !running {
+			// A line finished after the key loop stopped (for example while
+			// pending held a full burst and keys waited in the terminal ring):
+			// drain those waiting keys before drawing or waiting.
+			continue
 		}
 		// A choice of the palette, when no line runs: after the keys that
 		// waited, as one more key.
@@ -388,6 +387,27 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 		system.wait_word(&wait, &changes, seen)
 		system.wait_end(&wait, running ? system.time() + STATUS_INTERVAL : system.WAIT_FOREVER)
 	}
+}
+
+// completed_line_finish retires a line whose second thread has finished and
+// replays waiting keys until the queue empties or a key starts the next line.
+// Acquire pairs with the store of work.finished in run_lines so the first
+// thread observes all state updates before running the next key.
+@(private = "file")
+completed_line_finish :: proc "contextless" () -> (ended: bool) {
+	if !running || intrinsics.atomic_load_explicit(&work.finished, .Acquire) != work.started {
+		return false
+	}
+	running = false
+	if lost, loss_ended := key_path.loss_end(&keys_loss); loss_ended {
+		system.log_fact(.Info, Line_Ended_With_Lost_Keys{lost_keys = lost})
+	}
+	// The keys that waited, until one of them starts a line.
+	for !running {
+		waiting := line_editor.waiting_keys_take_first(&pending) or_break
+		key(waiting)
+	}
+	return true
 }
 
 // running_line_read reads, once, the state of the line that the second

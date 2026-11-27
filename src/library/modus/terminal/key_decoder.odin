@@ -19,19 +19,23 @@ Vt_State :: enum u8 {
 CSI_BUFFER_LIMIT :: 16
 
 Vt_Decoder :: struct {
-	state:      Vt_State,
-	csi:        [CSI_BUFFER_LIMIT]u8,
-	csi_count:  int,
-	utf8_value: u32,
-	utf8_need:  u8,
-	utf8_least: u32, // The least code point of the length of the sequence: a smaller one is overlong.
+	state:            Vt_State,
+	csi:              [CSI_BUFFER_LIMIT]u8,
+	csi_count:        int,
+	utf8_value:       u32,
+	utf8_need:        u8,
+	utf8_least:       u32, // The least code point of the length of the sequence: a smaller one is overlong.
+	pending_byte:     u8, // A byte that followed Escape and did not start CSI: decoded by vt_decode_pending so no key (such as Enter) is dropped.
+	has_pending_byte: bool,
 }
 
 // The replacement character, for a UTF-8 sequence that names no character.
 REPLACEMENT_CHARACTER :: rune(0xFFFD)
 
 // vt_decode_byte feeds one raw byte from the serial port into the decoder.
-// When a complete key is ready, ok is true.
+// When a complete key is ready, ok is true. After an Escape followed by a byte
+// other than '[', the caller calls vt_decode_pending to decode that byte so it
+// is never dropped.
 vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: Key, ok: bool) {
 	switch decoder.state {
 	case .Ground:
@@ -42,8 +46,11 @@ vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: Key,
 			decoder.csi_count = 0
 			return {}, false
 		}
-		// Standalone ESC followed by another byte: emit ESC and reset.
+		// Standalone ESC followed by another byte: emit ESC and keep b for
+		// vt_decode_pending so a typed key (for example Enter) is preserved.
 		decoder.state = .Ground
+		decoder.pending_byte = b
+		decoder.has_pending_byte = true
 		return {code = display.KEY_ESCAPE}, true
 	case .Csi:
 		return vt_csi(decoder, b)
@@ -66,6 +73,19 @@ vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: Key,
 	}
 	decoder.state = .Ground
 	return {}, false
+}
+
+// vt_decode_pending decodes the deferred follow-up byte saved when Escape was
+// followed by a byte other than '['. Call it after vt_decode_byte returns true
+// (and before reading the next byte) so ESC+Enter or ESC+ESC+[A keep both keys.
+vt_decode_pending :: proc "contextless" (decoder: ^Vt_Decoder) -> (key: Key, ok: bool) {
+	if !decoder.has_pending_byte {
+		return {}, false
+	}
+	b := decoder.pending_byte
+	decoder.has_pending_byte = false
+	decoder.pending_byte = 0
+	return vt_ground(decoder, b)
 }
 
 // vt_flush_escape emits a pending standalone Escape when no follow-up byte

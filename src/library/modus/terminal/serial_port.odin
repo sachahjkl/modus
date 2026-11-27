@@ -1,5 +1,6 @@
 package terminal_records
 
+import "base:intrinsics"
 import "modus:contract/ring"
 import "modus:system"
 
@@ -85,9 +86,41 @@ serial_port_write :: proc "contextless" (port: ^Serial_Port, bytes: []u8) -> boo
 	return true
 }
 
+// What serial_port_poll needs from the caller's wait.
+Serial_Poll_Result :: struct {
+	ring_full:   bool, // True when input stayed in the UART or decoder because the terminal ring lacked room.
+	room_needed: u32, // Free slots required before reading the next byte (2 after Escape, 1 otherwise).
+	more_input:  bool, // True when SERIAL_READ_LIMIT bytes were read and the UART still holds data ready.
+}
+
+// serial_port_room_needed gives the ring slots needed before reading the next
+// byte from the UART: 2 when Escape is pending (one byte can emit Escape plus
+// a follow-up key), 1 otherwise.
+serial_port_room_needed :: proc "contextless" (decoder: ^Vt_Decoder) -> u32 {
+	if decoder.state == .Escape {
+		return 2
+	}
+	return 1
+}
+
+// serial_port_can_read says whether queue has enough free slots for the next
+// byte decoded by decoder. A false read counter from the peer returns false so
+// no byte is read and dropped.
+serial_port_can_read :: proc "contextless" (decoder: ^Vt_Decoder, queue: ^ring.Queue) -> (ok: bool, needed: u32) {
+	needed = serial_port_room_needed(decoder)
+	capacity := ring.capacity(queue)
+	written := intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed)
+	read := intrinsics.atomic_load_explicit(&queue.counters.read, .Acquire)
+	held := written - read
+	if held > capacity {
+		return false, needed
+	}
+	return capacity - held >= min(needed, capacity), needed
+}
+
 @(private = "file")
-serial_key_send :: proc "contextless" (terminal_ring: ^ring.Ring, key: Key) {
-	_ = system.send(&terminal_ring.completions, ring.Record {
+serial_key_send :: proc "contextless" (terminal_ring: ^ring.Ring, key: Key) -> bool {
+	return system.send(&terminal_ring.completions, ring.Record {
 		kind   = u32(Input.Key),
 		tag    = key.code,
 		values = {0 = u64(key.character), 1 = u64(key.modifiers), 2 = key.serial},
@@ -95,39 +128,67 @@ serial_key_send :: proc "contextless" (terminal_ring: ^ring.Ring, key: Key) {
 }
 
 // serial_port_poll reads the bytes that came, and sends each key on the
-// terminal ring. An Escape alone, with no byte after it for
-// ESCAPE_ALONE_NANOSECONDS by the clock of the system, is the key Escape:
-// a sequence whose bytes come in two passes stays one key.
-serial_port_poll :: proc "contextless" (port: ^Serial_Port, terminal_ring: ^ring.Ring) {
+// terminal ring. Before taking a byte from the UART, it checks that the ring
+// has room for every key that byte can emit: when room is missing, the byte
+// stays in the UART FIFO and the caller waits for room (back pressure).
+// An Escape alone, with no byte after it for ESCAPE_ALONE_NANOSECONDS by the
+// clock of the system, is the key Escape: a sequence whose bytes come in two
+// passes stays one key.
+serial_port_poll :: proc "contextless" (port: ^Serial_Port, terminal_ring: ^ring.Ring) -> (result: Serial_Poll_Result) {
 	if !port.present {
-		return
+		return result
+	}
+	if port.decoder.has_pending_byte {
+		if ok, _ := serial_port_can_read(&port.decoder, &terminal_ring.completions); !ok {
+			return {ring_full = true, room_needed = 1}
+		}
+		if key, ready := vt_decode_pending(&port.decoder); ready {
+			_ = serial_key_send(terminal_ring, key)
+		}
 	}
 	read := 0
 	for read < SERIAL_READ_LIMIT {
 		if (system.port_read_8(SERIAL_LINE_STATUS) & SERIAL_DATA_READY) == 0 {
 			break
 		}
+		can_read, needed := serial_port_can_read(&port.decoder, &terminal_ring.completions)
+		if !can_read {
+			return {ring_full = true, room_needed = needed}
+		}
 		raw := system.port_read_8(SERIAL_DATA)
 		read += 1
 		if key, ready := vt_decode_byte(&port.decoder, raw); ready {
-			serial_key_send(terminal_ring, key)
+			_ = serial_key_send(terminal_ring, key)
 		}
+		if port.decoder.has_pending_byte {
+			if next_key, next_ready := vt_decode_pending(&port.decoder); next_ready {
+				_ = serial_key_send(terminal_ring, next_key)
+			}
+		}
+	}
+	if read == SERIAL_READ_LIMIT && (system.port_read_8(SERIAL_LINE_STATUS) & SERIAL_DATA_READY) != 0 {
+		result.more_input = true
 	}
 	if port.decoder.state != .Escape {
 		port.escape_since = 0
-		return
+		return result
 	}
 	now := system.nanoseconds()
-	// The Escape that waits is the last byte read: each byte read starts
-	// its wait again.
-	if read > 0 {
+	// The Escape that waits is the last byte read (or a deferred second Escape):
+	// start or reset its timeout window.
+	if read > 0 || port.escape_since == 0 {
 		port.escape_since = now
-		return
+		return result
 	}
 	if port.escape_since != 0 && now - port.escape_since >= ESCAPE_ALONE_NANOSECONDS {
+		// Flush standalone Escape only when the ring can take it.
+		if ring.count(&terminal_ring.completions) >= ring.capacity(&terminal_ring.completions) {
+			return {ring_full = true, room_needed = 1}
+		}
 		port.escape_since = 0
 		if key, ready := vt_flush_escape(&port.decoder); ready {
-			serial_key_send(terminal_ring, key)
+			_ = serial_key_send(terminal_ring, key)
 		}
 	}
+	return result
 }

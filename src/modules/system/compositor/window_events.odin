@@ -157,7 +157,7 @@ window_events_pass :: proc "contextless" () {
 			continue
 		}
 		client := &clients[index]
-		if client.ring.head == nil {
+		if client.ring.head == nil || client.answer_due.due {
 			continue
 		}
 		if key_path.window_queue_send_waiting(&queue, &client.ring.completions) {
@@ -178,34 +178,52 @@ window_events_pass :: proc "contextless" () {
 // each turn. A window that gives a false count gets its records in a later
 // turn of the loop, and nothing more.
 window_events_wait :: proc "contextless" (wait: ^system.Wait) {
-	TRIES :: 4 // The window can read between the send and the look at the counters.
+	// Plan value: bounded drain passes per client before yielding to the next
+	// main-loop turn so one window popping concurrently cannot starve other
+	// clients or delay input handling.
+	TRIES :: 4
 	for &queue, index in window_queues {
 		client := &clients[index]
 		if client.ring.head == nil {
 			continue
 		}
 		target := &client.ring.completions
-		// An answer due wakes the loop when the window read its ring. The
-		// room of a ring is added once: the kernel refuses a word twice,
-		// and the words of the wait count 2 for the room of each client.
-		room_waited := false
-		if client.answer_due.due && key_path.queue_is_exactly_full(target) {
-			system.wait_room(wait, target)
-			room_waited = true
-		}
-		for _ in 0 ..< TRIES {
-			if !key_path.window_queue_waits(&queue) {
-				break
+		// An answer due goes before any queued event of the window and wakes
+		// the loop when the window reads its ring. The room of a ring is added
+		// once: the kernel refuses a word twice, and the words of the wait
+		// count 2 for the room of each client.
+		wrote_any := false
+		if client.answer_due.due {
+			answer_action, answer_wrote := key_path.window_record_wait_prepare(&client.answer_due.due, &client.answer_due.record, target, TRIES)
+			if answer_wrote {
+				queue.delivered += 1
+				wrote_any = true
 			}
-			if key_path.queue_is_exactly_full(target) {
-				if !room_waited {
+			if client.answer_due.due {
+				// Never push regular queued events ahead of a still-due answer.
+				switch answer_action {
+				case .None:
+				case .Wait_Room:
 					system.wait_room(wait, target)
+				case .Continue_Now:
+					wait.full = true
 				}
-				break
+				continue
 			}
-			if key_path.window_queue_send_waiting(&queue, target) {
-				system.wake_reader(target)
-			}
+		}
+		action, wrote := key_path.window_queue_wait_prepare(&queue, target, TRIES)
+		if wrote_any || wrote {
+			system.wake_reader(target)
+		}
+		if lost, ended := key_path.window_queue_loss_ended(&queue); ended {
+			system.log_fact(.Info, Window_Events_Read_Again{window = window_field(client.title[:]), key_records = lost[.Key], pointer_records = lost[.Pointer], other_records = lost[.Other]})
+		}
+		switch action {
+		case .None:
+		case .Wait_Room:
+			system.wait_room(wait, target)
+		case .Continue_Now:
+			wait.full = true
 		}
 	}
 }

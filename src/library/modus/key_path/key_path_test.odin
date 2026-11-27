@@ -577,3 +577,179 @@ pointer_deltas_sum_when_coalesced_and_fold_into_buttons :: proc(t: ^testing.T) {
 		testing.expect_value(t, i64(read[33].values[POINTER_RECORD_WHEEL]), i64(3))
 	}
 }
+
+// window_queue_wait_prepare and window_queue_wait_finish never strand waiting
+// keys (including Enter at the end of a burst) when the window reads
+// concurrently, wait for room when the ring is exactly full, and refuse to
+// spin when a hostile reader writes a false read count.
+@(test)
+window_queue_wait_prepare_never_strands_keys_and_refuses_false_counts :: proc(t: ^testing.T) {
+	memory := new(Ring_Memory)
+	defer free(memory)
+	opened := window_ring(memory)
+	target := &opened.completions
+	storage := make([]ring.Record, WINDOW_QUEUE_CAPACITY)
+	defer delete(storage)
+	queue := Window_Queue{records = storage}
+
+	// Empty queue: no wait action, nothing written.
+	action, wrote := window_queue_wait_prepare(&queue, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.None)
+	testing.expect(t, !wrote)
+
+	// Burst of 200 keys ending with Enter (record 199): 32 enter the ring and
+	// 168 wait in queue.
+	BURST :: 200
+	for number in 0 ..< BURST {
+		window_queue_put(&queue, target, key_record(number), .Key)
+	}
+	testing.expect_value(t, queue.count, BURST - 32)
+	testing.expect(t, queue_is_exactly_full(target))
+
+	// Ring is exactly full: wait for room.
+	action, wrote = window_queue_wait_prepare(&queue, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.Wait_Room)
+	testing.expect(t, !wrote)
+
+	// Zero tries edge: still reports Wait_Room when full.
+	action, wrote = window_queue_wait_prepare(&queue, target, 0)
+	testing.expect_value(t, action, Window_Wait_Action.Wait_Room)
+	testing.expect(t, !wrote)
+
+	// Reader pops 1 record after a pass made progress: target is no longer
+	// full while records still wait. window_queue_wait_finish must return
+	// Continue_Now so the compositor loops immediately without sleeping.
+	read: [dynamic]ring.Record
+	defer delete(read)
+	read_some(target, 1, &read)
+	action, wrote = window_queue_wait_prepare(&queue, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.Wait_Room)
+	testing.expect(t, wrote)
+	read_some(target, 1, &read)
+	testing.expect(t, !queue_is_exactly_full(target))
+	testing.expect_value(t, window_queue_wait_finish(&queue, target, true), Window_Wait_Action.Continue_Now)
+	testing.expect_value(t, window_queue_wait_finish(&queue, target, false), Window_Wait_Action.None)
+
+	// Drain the whole burst in steps: every key including Enter (199) arrives
+	// in exact order.
+	for round := 0; window_queue_waits(&queue) && round < 100; round += 1 {
+		read_some(target, 16, &read)
+		action, wrote = window_queue_wait_prepare(&queue, target, 4)
+		testing.expect(t, wrote)
+		if window_queue_waits(&queue) {
+			testing.expect(t, action == .Wait_Room || action == .Continue_Now)
+		} else {
+			testing.expect_value(t, action, Window_Wait_Action.None)
+		}
+	}
+	read_some(target, 64, &read)
+	testing.expect_value(t, len(read), BURST)
+	if len(read) == BURST {
+		for number in 0 ..< BURST {
+			if read[number].values[0] != u64(number) {
+				testing.expectf(t, false, "record %d was %d, expected %d", number, read[number].values[0], number)
+				break
+			}
+		}
+	}
+
+	// Hostile client writes a false read count (write - read > capacity) while
+	// records wait: prepare must return None and never spin.
+	for number in 0 ..< 40 {
+		window_queue_put(&queue, target, key_record(number), .Key)
+	}
+	testing.expect(t, window_queue_waits(&queue))
+	target.counters.read = target.counters.write + 5
+	testing.expect(t, !queue_is_exactly_full(target))
+	action, wrote = window_queue_wait_prepare(&queue, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.None)
+	testing.expect(t, !wrote)
+}
+
+// A priority record (such as Surface_Answer) never stalls when room opens
+// between a failed push and the full check, always precedes regular queued
+// events when room opens, and refuses to spin on a false read counter.
+@(test)
+window_record_wait_prepare_handles_toctou_room_and_false_counts :: proc(t: ^testing.T) {
+	memory := new(Ring_Memory)
+	defer free(memory)
+	opened := window_ring(memory)
+	target := &opened.completions
+	storage := make([]ring.Record, WINDOW_QUEUE_CAPACITY)
+	defer delete(storage)
+	queue := Window_Queue{records = storage}
+
+	ANSWER_KIND :: u32(99)
+	due := false
+	answer := ring.Record{kind = ANSWER_KIND, values = {0 = 7}}
+
+	// Not due: no action.
+	action, wrote := window_record_wait_prepare(&due, &answer, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.None)
+	testing.expect(t, !wrote)
+
+	// Fill the ring and queue two regular keys behind it.
+	for number in 0 ..< 34 {
+		window_queue_put(&queue, target, key_record(number), .Key)
+	}
+	testing.expect(t, queue_is_exactly_full(target))
+	testing.expect_value(t, queue.count, 2)
+
+	// Full ring: Wait_Room, due stays true, record untouched.
+	due = true
+	action, wrote = window_record_wait_prepare(&due, &answer, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.Wait_Room)
+	testing.expect(t, !wrote)
+	testing.expect(t, due)
+	testing.expect_value(t, answer.kind, ANSWER_KIND)
+
+	// TOCTOU edge: window pops 1 slot after a failed push (modeled with
+	// tries = 0 while due is still true and room exists): returns Continue_Now
+	// instead of None so the compositor never sleeps until its next timer.
+	read: [dynamic]ring.Record
+	defer delete(read)
+	read_some(target, 1, &read)
+	testing.expect(t, queue_has_room(target))
+	action, wrote = window_record_wait_prepare(&due, &answer, target, 0)
+	testing.expect_value(t, action, Window_Wait_Action.Continue_Now)
+	testing.expect(t, !wrote)
+	testing.expect(t, due)
+
+	// With tries > 0, the priority record pushes into the freed slot ahead of
+	// the two queued regular keys.
+	action, wrote = window_record_wait_prepare(&due, &answer, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.None)
+	testing.expect(t, wrote)
+	testing.expect(t, !due)
+	testing.expect_value(t, answer.kind, u32(0))
+	// Ring is now full again; regular keys wait behind the priority record.
+	q_action, q_wrote := window_queue_wait_prepare(&queue, target, 4)
+	testing.expect_value(t, q_action, Window_Wait_Action.Wait_Room)
+	testing.expect(t, !q_wrote)
+
+	// Drain all remaining records: record 32 is the priority answer, followed by
+	// queued keys 32 and 33.
+	read_some(target, 32, &read)
+	_, q_wrote = window_queue_wait_prepare(&queue, target, 4)
+	testing.expect(t, q_wrote)
+	read_some(target, 32, &read)
+	testing.expect_value(t, len(read), 35)
+	if len(read) == 35 {
+		testing.expect_value(t, read[32].kind, ANSWER_KIND)
+		testing.expect_value(t, read[32].values[0], u64(7))
+		testing.expect_value(t, read[33].values[0], u64(32))
+		testing.expect_value(t, read[34].values[0], u64(33))
+	}
+
+	// Hostile client writes a false read counter while a priority record is due:
+	// returns None without spinning.
+	due = true
+	answer = ring.Record{kind = ANSWER_KIND, values = {0 = 8}}
+	target.counters.read = target.counters.write + 5
+	testing.expect(t, !queue_is_exactly_full(target))
+	testing.expect(t, !queue_has_room(target))
+	action, wrote = window_record_wait_prepare(&due, &answer, target, 4)
+	testing.expect_value(t, action, Window_Wait_Action.None)
+	testing.expect(t, !wrote)
+	testing.expect(t, due)
+}

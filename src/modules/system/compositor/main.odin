@@ -169,12 +169,16 @@ TITLE_ICON_X :: 8 // The icon of the module in the title bar, from the corner of
 TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
 CLIENT_CAPACITY :: bar.WINDOW_CAPACITY // The windows of the desktop at one time.
 
-// The words of the one wait of the loop, in its wait set: the control ring
-// and the input ring (2 each), the service ring and its connections
-// (isolated.SERVICE_CONNECTION_CAPACITY, 2 each), the settings page, the palette (4), and for each client 2 for its
-// ring and 2 more while its window waits for room in its completions. So
-// each word of each client fits, and no wait is refused.
-COMPOSITOR_WAIT_FIXED_WORDS :: 2 + 2 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) + 1 + 4
+// The words of the one wait of the loop, in its wait set (Computed from every
+// wait added in the main loop): the control ring and the input ring (2 each),
+// the service ring and its connections (isolated.SERVICE_CONNECTION_CAPACITY,
+// 2 each), the powerbox picker (2), the plan difference reading stage (1),
+// the settings page (1), the palette (6: published, completions ring, commands
+// room, table change count), the GPU scanout completions (2), the display
+// choices event (2), and for each client 2 for its ring and 2 more while its
+// window waits for room in its completions. So each word fits, and no wait is
+// refused.
+COMPOSITOR_WAIT_FIXED_WORDS :: 2 + 2 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) + 2 + 1 + 1 + 6 + 2 + 2
 COMPOSITOR_WAIT_WORDS :: COMPOSITOR_WAIT_FIXED_WORDS + 4 * CLIENT_CAPACITY
 #assert(COMPOSITOR_WAIT_WORDS <= op.WORD_WAIT_MOST)
 // The pages of its wait room (op.wait_room_pages): the page that names the
