@@ -196,9 +196,9 @@ release_image_has_no_test_module_and_no_test_start_grant_matches :: proc(t: ^tes
 }
 
 // The test-image plan file encodes valid budget rows for limits, log_flood,
-// and pdpe1gb_probe; the default plan file encodes the eight shipped post-ready
-// budget rows; release_boot_image_of keeps default_plan_values and strips
-// test_plan_values so no release image carries test plan rows.
+// pdpe1gb_probe, and bootstrap_probe; the default plan file encodes the eight
+// shipped post-ready budget rows; release_boot_image_of keeps default_plan_values
+// and strips test_plan_values so no release image carries test plan rows.
 @(test)
 test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	encoded, ok := test_plan_values_encode()
@@ -206,7 +206,7 @@ test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	head, check_problem := plan_values.set_check(encoded)
 	testing.expect_value(t, check_problem, plan_values.Set_Problem.None)
 	testing.expect_value(t, head.principal, u64(0))
-	testing.expect_value(t, head.owner_count, 3)
+	testing.expect_value(t, head.owner_count, 4)
 
 	limits_vals, limits_found := plan_values.owner_values_of(encoded, "limits")
 	testing.expect(t, limits_found, "limits owner missing from test plan")
@@ -227,6 +227,12 @@ test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	pdpe_policy, pdpe_conflict, pdpe_over := root_plan_values.module_budget_policy_of(pdpe_vals)
 	testing.expect(t, !pdpe_conflict && !pdpe_over, "pdpe1gb_probe policy reported conflict")
 	testing.expect(t, pdpe_policy.size_kind == .Pages && pdpe_policy.pages == TEST_PDPE1GB_PROBE_PAGES)
+
+	boot_vals, boot_found := plan_values.owner_values_of(encoded, "bootstrap_probe")
+	testing.expect(t, boot_found, "bootstrap_probe owner missing from test plan")
+	boot_policy, boot_conflict, boot_over := root_plan_values.module_budget_policy_of(boot_vals)
+	testing.expect(t, !boot_conflict && !boot_over, "bootstrap_probe policy reported conflict")
+	testing.expect(t, boot_policy.size_kind == .Pages && boot_policy.pages == TEST_BOOTSTRAP_PROBE_PAGES)
 
 	_, absent := plan_values.owner_values_of(encoded, "console")
 	testing.expect(t, !absent, "unrelated module unexpectedly present in test plan")
