@@ -103,13 +103,16 @@ processor_random_llvm_ir_detection :: proc(t: ^testing.T) {
 	}
 }
 
-// Only src/library/modus/random/entropy.odin is exempt, and the real
-// repository tree passes with zero breaches.
+// Only src/library/modus/random/entropy.odin and the test-only planted
+// divergence probe src/modules/tests/replay_rdrand_probe/main.odin are exempt,
+// and the real repository tree passes with zero breaches.
 @(test)
 processor_random_rule_holds_in_repository :: proc(t: ^testing.T) {
 	testing.expect(t, processor_random_path_allowed("src/library/modus/random/entropy.odin"))
+	testing.expect(t, processor_random_path_allowed("src/modules/tests/replay_rdrand_probe/main.odin"))
 	testing.expect(t, !processor_random_path_allowed("src/library/modus/random/generator.odin"))
 	testing.expect(t, !processor_random_path_allowed("src/modules/tests/replay_probe/main.odin"))
+	testing.expect(t, !processor_random_path_allowed("src/modules/tests/replay_rdrand_probe/facts.odin"))
 
 	uses, file_count, ok := processor_random_uses_of_tree("")
 	testing.expect(t, ok)

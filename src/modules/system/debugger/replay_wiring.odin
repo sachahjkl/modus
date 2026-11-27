@@ -17,9 +17,10 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The pages of the input history: 64 KiB, the header and about one thousand
-// kernel entries of a small process.
-HISTORY_PAGES :: 16
+// The pages of the input history: 512 KiB, enough for recording an interactive
+// window session (surface mapping, compositor deltas, and input events) without
+// filling the buffer prematurely.
+HISTORY_PAGES :: 128
 // The point copies that the kernel takes from the budget of the history at
 // a start: one page each, at most POINT_COPY_CAPACITY in the kernel.
 POINT_COPY_PAGES :: 32

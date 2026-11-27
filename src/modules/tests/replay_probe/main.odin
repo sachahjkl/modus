@@ -38,14 +38,19 @@ import "modus:contract/enum_word"
 import "modus:contract/input_history"
 import "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:display"
 import "modus:random"
 import "modus:system"
+import terminal "modus:terminal"
 
 // The test process, a child at a time, and the threads of both. The
-// working memory pays each child, its histories, and the point copies and
-// private pages that the kernel takes from the budget of a history.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1200, processes = 2, threads = 2}
+// working memory pays each child (including a recorded console child and its
+// 1024-page terminal text region or stand-in mapping on replay), its
+// histories, and the point copies and shared-page baselines that the kernel
+// takes from the budget of a history.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6400, processes = 2, threads = 2}
 
 // The value of the context that gives the role. Not the value 0: the root
 // service writes there the size of the boot image of the grant Image.
@@ -57,12 +62,15 @@ Role :: enum u64 {
 	Reader = 1, // The recorded child: it reads the shared page each round.
 }
 
-CASE_COUNT :: 3
+CASE_COUNT :: 4
 // The rounds of the reader: one write of the test process each.
 ROUNDS :: 4
-// The pages of each history: the head, about ten records each round, and the
-// start of the reader. A full history ends the record with Buffer_Full.
+// The pages of each reader history: the head, about ten records each round, and
+// the start of the reader. A full history ends the record with Buffer_Full.
 HISTORY_PAGES :: 16
+// The pages of the console history: 512 KiB holds console startup, terminal
+// mappings, typed key deltas, Lex evaluation, and output records.
+CONSOLE_HISTORY_PAGES :: 128
 // Where the reader maps the shared page: far from each place that a
 // starter or the kernel chooses.
 SHARED_ADDRESS :: u64(0x0000_0100_0000_0000)
@@ -82,6 +90,7 @@ checksum_word: u32
 
 image: []u8
 process_generator: random.Generator
+log_handle: system.Handle
 right_count: int
 
 // mix_deterministic runs a pure integer mixing loop whose result depends only
@@ -155,6 +164,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Probe_No_Boot_Image{})
 		system.stop(.Failed)
 	}
+	log_handle = ctx.handles[op.CONTEXT_LOG]
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	test_run()
 	if right_count == CASE_COUNT {
@@ -171,9 +181,9 @@ Mapped :: struct {
 	bytes:  []u8,
 }
 
-// mapped_create makes a memory object, contiguous for a history, and maps
-// it with Write.
-mapped_create :: proc "contextless" (page_count: u64, contiguous: bool) -> (mapped: Mapped, ok: bool) {
+// mapped_create makes a memory object, contiguous for a history, and maps it
+// with Write when writable is true, or read-only when writable is false.
+mapped_create :: proc "contextless" (page_count: u64, contiguous: bool, writable := true) -> (mapped: Mapped, ok: bool) {
 	flags: op.Memory_Flags
 	if contiguous {
 		flags = {.Contiguous}
@@ -183,7 +193,11 @@ mapped_create :: proc "contextless" (page_count: u64, contiguous: bool) -> (mapp
 		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(made), step = value_kinds.text_field("Memory_Create", 32)})
 		return {}, false
 	}
-	address, mapped_status := system.memory_map(memory, {.Write})
+	map_flags: op.Map_Flags
+	if writable {
+		map_flags = {.Write}
+	}
+	address, mapped_status := system.memory_map(memory, map_flags)
 	if mapped_status != .Succeeded {
 		system.close(memory)
 		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(mapped_status), step = value_kinds.text_field("Memory_Map", 32)})
@@ -244,6 +258,7 @@ History_Counts :: struct {
 	shared_mappings:    u64, // The Shared_Mapping records of the shared page: one page, Read_Write.
 	other_mappings:     u64,
 	shared_deltas:      u64,
+	all_deltas:         u64,
 	cycle_reads:        u64,
 	cpuid_reads:        u64,
 	carriers:           u64, // The wakes of checksum_word.
@@ -273,6 +288,7 @@ history_counts :: proc "contextless" (bytes: []u8, scratch: []u8) -> (counts: Hi
 				counts.other_mappings += 1
 			}
 		case .Page_Delta:
+			counts.all_deltas += 1
 			if header, _ := input_history.page_delta_validate(payload); header.virtual_address == SHARED_ADDRESS {
 				counts.shared_deltas += 1
 			}
@@ -300,23 +316,26 @@ carries_checksum :: proc "contextless" (entry: input_history.Kernel_Completion_P
 // One record of a history, private to this process.
 record_scratch: [input_history.MAX_RECORD_PAYLOAD_BYTES]u8
 
-// test_run runs the three cases.
+// test_run runs the four cases: reader record/replay/divergence, then live
+// record and replay of the real console module.
 test_run :: proc "contextless" () {
-	shared, shared_ok := mapped_create(1, false)
-	if !shared_ok {
-		return
+	{
+		shared, shared_ok := mapped_create(1, false)
+		if !shared_ok {
+			return
+		}
+		defer mapped_release(shared)
+		history, history_ok := mapped_create(HISTORY_PAGES, true)
+		if !history_ok {
+			return
+		}
+		defer mapped_release(history)
+		if case_of_the_record(shared, history) {
+			case_of_the_replay(history)
+			case_of_the_divergence(history)
+		}
 	}
-	defer mapped_release(shared)
-	history, history_ok := mapped_create(HISTORY_PAGES, true)
-	if !history_ok {
-		return
-	}
-	defer mapped_release(history)
-	if !case_of_the_record(shared, history) {
-		return
-	}
-	case_of_the_replay(history)
-	case_of_the_divergence(history)
+	case_of_the_console()
 }
 
 // case_of_the_record records the reader while this process writes the
@@ -469,4 +488,264 @@ case_of_the_divergence :: proc "contextless" (history: Mapped) {
 	right = right && header.divergence_point == expected_point && header.divergence_expected == expected_sum && header.divergence_actual != expected_sum
 	right = right && reported && found && report.recorded_kind == .Kernel_Completion && report.point == expected_point
 	system.log_fact(.Info, Divergence_Checked{verdict = verdict(right)})
+}
+
+// console_start starts the real console module held before its first
+// instruction. Recording passes a 2-page terminal ring and a 1024-page text
+// region; replay passes no terminal handles so the kernel supplies stand-in
+// mappings from the history.
+console_start :: proc "contextless" (term_ring, term_text: system.Handle) -> (process: system.Handle, entry: u64, ok: bool) {
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	values: [op.CONTEXT_VALUES]u64
+	if log_handle != 0 {
+		grants[op.CONTEXT_LOG] = {log_handle, {.Write}}
+	}
+	if term_ring != 0 {
+		grants[system.GRANT_TERMINAL_RING] = {term_ring, {.Read, .Write}}
+	}
+	if term_text != 0 {
+		grants[system.GRANT_TERMINAL_TEXT] = {term_text, {.Read, .Write}}
+	}
+	error: module.Load_Error
+	status: call_outcome.Call_Outcome
+	process, status = system.process_start(system.image_find(image, "console"), "console", grants, random.values_with_seed(&process_generator, values), {pages = 4096, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error, held_entry = &entry)
+	if status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("console process_start", 32)})
+		return 0, 0, false
+	}
+	return process, entry, true
+}
+
+// console_text_read copies count bytes from the circular terminal text region
+// starting at cursor and advances cursor.
+console_text_read :: proc "contextless" (text_bytes: []u8, cursor: ^u64, count: u32, dest: []u8) -> []u8 {
+	total := int(min(u64(count), u64(len(dest))))
+	place := int(cursor^ % terminal.TEXT_SIZE)
+	first := min(total, len(text_bytes) - place)
+	copy(dest[:first], text_bytes[place:place + first])
+	if total > first {
+		copy(dest[first:total], text_bytes[:total - first])
+	}
+	cursor^ += u64(count)
+	return dest[:total]
+}
+
+// bytes_contain reports whether haystack holds needle.
+bytes_contain :: proc "contextless" (haystack: []u8, needle: string) -> bool {
+	if len(needle) == 0 {
+		return true
+	}
+	if len(haystack) < len(needle) {
+		return false
+	}
+	needle_bytes := transmute([]u8)needle
+	for start in 0 ..= len(haystack) - len(needle_bytes) {
+		matched := true
+		for offset in 0 ..< len(needle_bytes) {
+			if haystack[start + offset] != needle_bytes[offset] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+// console_key_send pushes one key record into the terminal completion queue
+// and wakes the console reader.
+console_key_send :: proc "contextless" (term: ^ring.Ring, code: u32, ch: rune, serial: u64) -> bool {
+	record := ring.Record {
+		kind   = u32(terminal.Input.Key),
+		tag    = code,
+		values = {0 = u64(ch), 1 = 0, 2 = serial},
+	}
+	for deadline := hang_bound(); system.time() < deadline; {
+		if ring.push(&term.completions, record) {
+			system.wake_reader(&term.completions)
+			return true
+		}
+		system.sleep(system.time() + 1)
+	}
+	return false
+}
+
+// case_of_the_console records the real console module while this process acts
+// as its shared terminal writer, types "6 * 7" and Enter, verifies "42" in
+// the terminal text output, ends recording, and replays the console alone
+// with no terminal handles to clean completion.
+case_of_the_console :: proc "contextless" () {
+	history, history_ok := mapped_create(CONSOLE_HISTORY_PAGES, true)
+	if !history_ok {
+		system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+		return
+	}
+	defer mapped_release(history)
+
+	saw_prompt := false
+	saw_42 := false
+	saw_prompt_after_42 := false
+	{
+		term_ring, ring_ok := mapped_create(ring.PAGE_COUNT, false, writable = true)
+		if !ring_ok {
+			system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+			return
+		}
+		defer mapped_release(term_ring)
+		// Map the 1024-page text region read-only here so the console is its
+		// sole writer: the kernel emits a Shared_Mapping with zero shared-page
+		// baselines and zero initial deltas for untouched pages.
+		term_text, text_ok := mapped_create(terminal.TEXT_PAGES, false, writable = false)
+		if !text_ok {
+			system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+			return
+		}
+		defer mapped_release(term_text)
+		term, term_opened := ring.open(raw_data(term_ring.bytes), ring.PAGE_COUNT)
+		if !term_opened {
+			system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+			return
+		}
+		console_proc, console_entry, started := console_start(term_ring.memory, term_text.memory)
+		if !started {
+			system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+			return
+		}
+		defer system.close(console_proc)
+		if status := system.process_record_start(console_proc, history.memory); status != .Succeeded {
+			system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("console Record_Start", 32)})
+			system.process_stop(console_proc)
+			system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+			return
+		}
+		if status := system.process_release(console_proc, console_entry); status != .Succeeded {
+			system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("console process_release", 32)})
+			system.process_stop(console_proc)
+			system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+			return
+		}
+
+		text_cursor: u64
+		run_buf: [terminal.RUN_LIMIT]u8
+		for deadline := hang_bound(); !saw_prompt && system.time() < deadline; {
+			if rec, popped := ring.pop(&term.commands); popped {
+				kind, kind_ok := terminal.kind_of_ring_word(rec.kind)
+				if kind_ok && rec.tag > 0 {
+					_ = console_text_read(term_text.bytes, &text_cursor, rec.tag, run_buf[:])
+				}
+				if kind_ok && kind == .Edit {
+					saw_prompt = true
+				}
+			} else {
+				wait := system.wait_begin()
+				system.wait_records(&wait, &term.commands)
+				system.wait_end(&wait, system.time() + 10)
+			}
+		}
+
+		keys_sent := saw_prompt
+		line_chars := "6 * 7"
+		serial := u64(1)
+		for ch in line_chars {
+			if !keys_sent {
+				break
+			}
+			keys_sent = console_key_send(&term, 1, ch, serial)
+			serial += 1
+		}
+		// Wait until the console echoes the typed edit line before sending Enter
+		// so edit_show() updates shown from "> 6 * 7" back to "> " after evaluation.
+		saw_line_echo := false
+		for deadline := hang_bound(); keys_sent && !saw_line_echo && system.time() < deadline; {
+			if rec, popped := ring.pop(&term.commands); popped {
+				kind, kind_ok := terminal.kind_of_ring_word(rec.kind)
+				run_slice: []u8
+				if kind_ok && rec.tag > 0 {
+					run_slice = console_text_read(term_text.bytes, &text_cursor, rec.tag, run_buf[:])
+				}
+				if kind_ok && kind == .Edit && bytes_contain(run_slice, "6 * 7") {
+					saw_line_echo = true
+				}
+			} else {
+				wait := system.wait_begin()
+				system.wait_records(&wait, &term.commands)
+				system.wait_end(&wait, system.time() + 10)
+			}
+		}
+		if keys_sent && saw_line_echo {
+			keys_sent = console_key_send(&term, display.KEY_ENTER, '\n', serial)
+		} else {
+			keys_sent = false
+		}
+
+		for deadline := hang_bound(); keys_sent && !(saw_42 && saw_prompt_after_42) && system.time() < deadline; {
+			if rec, popped := ring.pop(&term.commands); popped {
+				kind, kind_ok := terminal.kind_of_ring_word(rec.kind)
+				run_slice: []u8
+				if kind_ok && rec.tag > 0 {
+					run_slice = console_text_read(term_text.bytes, &text_cursor, rec.tag, run_buf[:])
+				}
+				if kind_ok && kind == .Text && bytes_contain(run_slice, "42") {
+					saw_42 = true
+				} else if kind_ok && kind == .Edit && saw_42 {
+					saw_prompt_after_42 = true
+				}
+			} else {
+				wait := system.wait_begin()
+				system.wait_records(&wait, &term.commands)
+				system.wait_end(&wait, system.time() + 10)
+			}
+		}
+
+		_ = system.process_record_end(console_proc)
+		system.process_stop(console_proc)
+		_, _, _ = reader_wait_stopped(console_proc)
+	}
+
+	counts, counted := history_counts(history.bytes, record_scratch[:])
+	total_mappings := counts.shared_mappings + counts.other_mappings
+	system.log_fact(.Info, Console_Recorded{points = counts.points, shared_mappings = total_mappings, shared_deltas = counts.all_deltas, end_reason = u64(counts.end)})
+	record_ok := saw_prompt && saw_42 && saw_prompt_after_42 && counted && counts.end == .Recorder_Stopped && counts.points > 0 && total_mappings >= 2 && counts.all_deltas >= 1
+	if !record_ok {
+		system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+		return
+	}
+
+	replay_history, copy_ok := mapped_create(CONSOLE_HISTORY_PAGES, true)
+	if !copy_ok {
+		system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+		return
+	}
+	defer mapped_release(replay_history)
+	copy(replay_history.bytes, history.bytes)
+
+	replay_proc, replay_entry, replay_started := console_start(0, 0)
+	if !replay_started {
+		system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+		return
+	}
+	defer system.close(replay_proc)
+	if status := system.process_replay_start(replay_proc, replay_history.memory); status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("console Replay_Start", 32)})
+		system.process_stop(replay_proc)
+		system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+		return
+	}
+	if status := system.process_release(replay_proc, replay_entry); status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("console replay release", 32)})
+		system.process_stop(replay_proc)
+		system.log_fact(.Info, Console_Checked{verdict = verdict(false)})
+		return
+	}
+	_, _, stopped := reader_wait_stopped(replay_proc)
+	if !stopped {
+		system.process_stop(replay_proc)
+	}
+	opened, opened_ok := input_history.history_reader_open(replay_history.bytes)
+	end, _ := input_history.history_end_reason_of_word(u64(opened.header.end_reason))
+	system.log_fact(.Info, Console_Replayed{end_reason = u64(end), divergence_kind = u64(opened.header.divergence_kind), divergence_point = opened.header.divergence_point})
+	right := stopped && opened_ok && end == .Recorder_Stopped && opened.header.divergence_kind == 0 && opened.header.divergence_point == 0
+	system.log_fact(.Info, Console_Checked{verdict = verdict(right)})
 }

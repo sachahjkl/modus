@@ -136,6 +136,7 @@ test_parts := [?]Test_Part {
 	},
 	{name = "self_tests", does = "The machines of the self tests of the kernel: each one does one thing that the processor must refuse, from its own boot volume", procedures = {"self_tests_run"}, self_test_volumes = true},
 	{name = "debugger", does = "The two machines of the debugger: the contract of the kernel with the record and the replay of a process with a shared writer, then the commands of the service `debugger`", procedures = {"debugger_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "record_replay", does = "The machine of live record and replay: records and replays a window process (`hall_of_fame`), a planted `rdrand` module (`replay_rdrand_probe`) to its exact divergence, and the console (`console`), exporting each kernel input history from the memory file and verifying each through `modustool replay`", procedures = {"record_replay_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "ranges", does = "The machines of the ranges of storage", procedures = {"ranges_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "quic-real", does = "The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer", procedures = {"quic_real_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	// No machine starts: the part needs the built modules, which the build

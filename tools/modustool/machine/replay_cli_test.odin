@@ -1,7 +1,12 @@
 // Host unit tests for `modustool replay <part> <process>` (replay_cli.odin).
 package machine
 
+import "core:encoding/endian"
+import "core:os"
 import "core:testing"
+import "modus:contract/call_outcome"
+import "modus:contract/input_history"
+import op "modus:contract/operation"
 import "modus:contract/replay_engine"
 import "modustool:foundation"
 
@@ -88,4 +93,126 @@ replay_diagnose_history_detects_clean_and_diverged_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, rdrand_report.divergence_refusal, replay_engine.Replay_Refusal.Rdrand_Divergence)
 	testing.expect_value(t, rdrand_report.divergence_point, u64(3))
 	testing.expect(t, rdrand_report.has_nearest_checkpoint && rdrand_report.nearest_checkpoint_point == 1, "planted rdrand points back to checkpoint 1")
+}
+
+// Kernel "MODUSHIS" history diagnosis refuses damaged, unended, or truncated
+// buffers, verifies clean Normal_Stop and Recorder_Stopped histories, reports
+// exact divergence details, and extracts matching histories from a memory file.
+@(test)
+replay_diagnose_kernel_history_and_memory_extraction :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	module_hash := [32]u8{0 = 0x42, 1 = 0x19, 31 = 0xAB}
+	other_hash := [32]u8{0 = 0x99}
+	page := int(input_history.HISTORY_PAGE_SIZE)
+
+	// Refusal 1: truncated buffer with MODUSHIS magic.
+	truncated: [16]u8
+	endian.put_u64(truncated[:8], .Little, input_history.HISTORY_MAGIC)
+	_, trunc_ref := replay_diagnose_history(truncated[:])
+	testing.expect_value(t, trunc_ref, replay_engine.Replay_Refusal.Truncated_Record)
+
+	// Refusal 2: initialized history with end_reason == None is refused.
+	unended := make([]u8, page, context.temp_allocator)
+	unended_writer, ok := input_history.history_writer_init(unended, module_hash, 1_000_000_000, 100, 7)
+	testing.expect(t, ok, "kernel history writer initializes")
+	testing.expect(t, input_history.history_writer_append_cycle_counter(&unended_writer, 0x401000, 0x7000, {cycles = 12345}), "append cycle counter")
+	_, unended_ref := replay_diagnose_history(unended)
+	testing.expect_value(t, unended_ref, replay_engine.Replay_Refusal.Bad_Header)
+
+	// Refusal 3: history with end_reason set in header but missing History_End record.
+	missing_end := make([]u8, page, context.temp_allocator)
+	copy(missing_end, unended)
+	testing.expect(t, input_history.history_header_record_end(missing_end, .Normal_Stop, .None, 0, 0, 0), "seal header directly")
+	_, missing_end_ref := replay_diagnose_history(missing_end)
+	testing.expect_value(t, missing_end_ref, replay_engine.Replay_Refusal.Bad_Header)
+
+	// Refusal 4: trailing record after History_End is refused.
+	trailing := make([]u8, page, context.temp_allocator)
+	trailing_writer, trailing_ok := input_history.history_writer_init(trailing, module_hash, 1_000_000_000, 150, 7)
+	testing.expect(t, trailing_ok, "trailing history writer initializes")
+	testing.expect(t, input_history.history_writer_append_end(&trailing_writer, 0x401100, 0x7000, .Recorder_Stopped), "append early end")
+	// Force writer open to plant a malformed trailing record after History_End.
+	trailing_writer.ended = false
+	testing.expect(t, input_history.history_writer_append_cycle_counter(&trailing_writer, 0x401110, 0x7000, {cycles = 999}), "plant trailing record")
+	testing.expect(t, input_history.history_header_record_end(trailing, .Recorder_Stopped, .None, 0, 0, 0), "seal trailing header")
+	_, trailing_ref := replay_diagnose_history(trailing)
+	testing.expect_value(t, trailing_ref, replay_engine.Replay_Refusal.Bad_Header)
+
+	// Success 1: clean Recorder_Stopped kernel history (console/window shape).
+	clean := make([]u8, page, context.temp_allocator)
+	clean_writer, clean_ok := input_history.history_writer_init(clean, module_hash, 1_000_000_000, 200, 7)
+	testing.expect(t, clean_ok, "clean history writer initializes")
+	testing.expect(t, input_history.history_writer_append_kernel_completion(&clean_writer, 0x402000, 0x7000, {command_kind = u32(op.Operation.Word_Wake), command_values = {0 = 0x500000, 1 = 0x1111}, completion_status = u32(call_outcome.Call_Outcome.Succeeded)}, nil), "append completion")
+	testing.expect(t, input_history.history_writer_append_end(&clean_writer, 0x402010, 0x7000, .Recorder_Stopped), "append recorder stopped end")
+	testing.expect(t, input_history.history_header_record_end(clean, .Recorder_Stopped, .None, 0, 0, 0), "record header end")
+
+	// Refusal 5: mismatched header point_count is refused.
+	bad_count := make([]u8, page, context.temp_allocator)
+	copy(bad_count, clean)
+	bad_hdr := (^input_history.History_Header)(raw_data(bad_count))
+	bad_hdr.point_count = 99
+	_, bad_count_ref := replay_diagnose_history(bad_count)
+	testing.expect_value(t, bad_count_ref, replay_engine.Replay_Refusal.Bad_Header)
+
+	// Refusal 6: mismatched header end_reason vs stream History_End reason is refused.
+	bad_reason := make([]u8, page, context.temp_allocator)
+	copy(bad_reason, clean)
+	testing.expect(t, input_history.history_header_record_end(bad_reason, .Normal_Stop, .None, 0, 0, 0), "overwrite header end reason")
+	_, bad_reason_ref := replay_diagnose_history(bad_reason)
+	testing.expect_value(t, bad_reason_ref, replay_engine.Replay_Refusal.Bad_Header)
+
+	clean_report, clean_ref := replay_diagnose_history(clean)
+	testing.expect_value(t, clean_ref, replay_engine.Replay_Refusal.None)
+	testing.expect(t, clean_report.is_kernel_history, "recognized as kernel history")
+	testing.expect(t, !clean_report.diverged, "clean kernel history has no divergence")
+	testing.expect_value(t, clean_report.kernel_end_reason, input_history.History_End_Reason.Recorder_Stopped)
+	testing.expect_value(t, clean_report.point_count, 2)
+
+	// Success 2: diverged kernel history (planted rdrand Unexpected_Arguments).
+	diverged := make([]u8, page, context.temp_allocator)
+	div_writer, div_ok := input_history.history_writer_init(diverged, module_hash, 1_000_000_000, 300, 7)
+	testing.expect(t, div_ok, "diverged history writer initializes")
+	testing.expect(t, input_history.history_writer_append_cpuid(&div_writer, 0x403000, 0x7000, {leaf = 1, eax = 1, ebx = 2, ecx = 0, edx = 4}), "append cpuid")
+	testing.expect(t, input_history.history_writer_append_kernel_completion(&div_writer, 0x403040, 0x7000, {command_kind = u32(op.Operation.Word_Wake), command_values = {0 = 0x500000, 1 = 0xAAAA_BBBB}, completion_status = u32(call_outcome.Call_Outcome.Succeeded)}, nil), "append checksum wake")
+	testing.expect(t, input_history.history_writer_append_end(&div_writer, 0x403060, 0x7000, .Normal_Stop), "append original normal stop")
+	testing.expect(t, input_history.history_header_record_end(diverged, .Divergence, .Unexpected_Arguments, 2, 0xAAAA_BBBB, 0xCCCC_DDDD), "record replay divergence in header")
+
+	div_report, div_ref := replay_diagnose_history(diverged)
+	testing.expect_value(t, div_ref, replay_engine.Replay_Refusal.None)
+	testing.expect(t, div_report.is_kernel_history && div_report.diverged, "diverged kernel history detected")
+	testing.expect_value(t, div_report.kernel_divergence_kind, input_history.Divergence_Kind.Unexpected_Arguments)
+	testing.expect_value(t, div_report.divergence_point, u64(2))
+	testing.expect_value(t, div_report.expected_rip, u64(0x403040))
+	testing.expect_value(t, div_report.expected_value, u64(0xAAAA_BBBB))
+	testing.expect_value(t, div_report.actual_value, u64(0xCCCC_DDDD))
+
+	// Memory-file extraction: places noise, unended, clean, and diverged
+	// histories at page-aligned offsets and extracts each by hash and state.
+	mem_path := foundation.BUILD_FOLDER + "/test_replay_extract_memory.raw"
+	_ = os.make_directory_all(foundation.BUILD_FOLDER)
+	defer _ = os.remove(mem_path)
+	mem_buf := make([]u8, page + len(unended) + len(clean) + len(diverged), context.temp_allocator)
+	copy(mem_buf[page:], unended)
+	copy(mem_buf[page + len(unended):], clean)
+	copy(mem_buf[page + len(unended) + len(clean):], diverged)
+	testing.expect(t, os.write_entire_file(mem_path, mem_buf) == nil, "write synthetic guest memory file")
+
+	// Missing hash returns not found.
+	_, missing_found := replay_extract_kernel_history_from_memory_file(mem_path, other_hash, false, context.temp_allocator)
+	testing.expect(t, !missing_found, "unknown module hash is not extracted")
+
+	// Extract clean history.
+	got_clean, got_clean_ok := replay_extract_kernel_history_from_memory_file(mem_path, module_hash, false, context.temp_allocator)
+	testing.expect(t, got_clean_ok, "clean history extracted from memory file")
+	got_clean_diag, got_clean_ref := replay_diagnose_history(got_clean)
+	testing.expect_value(t, got_clean_ref, replay_engine.Replay_Refusal.None)
+	testing.expect(t, !got_clean_diag.diverged && got_clean_diag.point_count == 2, "extracted clean history verifies")
+
+	// Extract diverged history.
+	got_div, got_div_ok := replay_extract_kernel_history_from_memory_file(mem_path, module_hash, true, context.temp_allocator)
+	testing.expect(t, got_div_ok, "diverged history extracted from memory file")
+	got_div_diag, got_div_ref := replay_diagnose_history(got_div)
+	testing.expect_value(t, got_div_ref, replay_engine.Replay_Refusal.None)
+	testing.expect(t, got_div_diag.diverged && got_div_diag.kernel_divergence_kind == .Unexpected_Arguments, "extracted diverged history verifies")
 }

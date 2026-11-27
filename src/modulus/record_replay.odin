@@ -45,7 +45,7 @@ REPLAY_RECORD_SCRATCH_BYTES :: size_of(input_history.Kernel_Completion_Payload) 
 // A replay maps a stand-in mapping for each mapping that a record names, and
 // a record names at most one for each point copy and each shared page.
 #assert(input_history.STAND_IN_MAPPING_CAPACITY == POINT_COPY_CAPACITY + SHARED_PAGE_CAPACITY)
-#assert(input_history.STAND_IN_PAGE_LIMIT == u64(POINT_COPY_CAPACITY + SHARED_PAGE_CAPACITY))
+#assert(input_history.STAND_IN_PAGE_LIMIT >= u64(POINT_COPY_CAPACITY + SHARED_PAGE_CAPACITY))
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.Cycle_Counter_Payload))
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.Cpuid_Payload))
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.History_End_Payload))
@@ -96,8 +96,10 @@ Process_Record_State :: struct {
 	reader:            input_history.History_Reader,
 	point_copies:      [POINT_COPY_CAPACITY]Point_Copy,
 	point_copy_count:  u32,
-	handle_map:        replay_filter.Replay_Handle_Map, // Replay translation from recorded handle -> real handle.
-	stint_start_point: u64, // Point count when the current stint started (atomic).
+	handle_map:             replay_filter.Replay_Handle_Map, // Replay translation from recorded handle -> real handle.
+	recorded_budget_handle: u64, // Recorded handles[CONTEXT_BUDGET] restored into the replay context page.
+	real_budget_handle:     u64, // Real handles[CONTEXT_BUDGET] owned by the replayed process.
+	stint_start_point:      u64, // Point count when the current stint started (atomic).
 	pinned_processor:  u32, // Single processor index assigned to this process.
 	// The shared writers (shared_writers_setup). The gate
 	// is Inactive when no other process writes a page that this process
@@ -1167,6 +1169,11 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			}
 			return setup_status
 		}
+		// Capture the replayed process's real CONTEXT_BUDGET handle before
+		// replacing its context page with the recorded context page, then
+		// record the mapping from recorded -> real budget handle for local
+		// Memory_Create and Memory_Commit operations during replay.
+		real_budget_handle := replay_context_budget_handle_locked(target_index)
 		// The context of the replay is the context of the record: the
 		// starter of the replay wrote its own, which goes first, so that no
 		// byte of it stays where the record had a zero.
@@ -1182,6 +1189,8 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			region_release(region_index)
 			return .Argument_Refused
 		}
+		rec.real_budget_handle = real_budget_handle
+		rec.recorded_budget_handle = replay_context_budget_handle_locked(target_index)
 		record_replay_mark_mappings(target_index, true)
 		intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.Replaying)
 		intrinsics.atomic_add(&record_replay_active_count, 1)
@@ -1741,6 +1750,9 @@ replay_received_mapping_locked :: proc "contextless" (cpu: ^Processor, process_i
 		return {.Unexpected_Arguments, entry.virtual_address, 0}, record_header.point_number
 	}
 	input_history.history_reader_advance(&rec.reader, record_header, stride)
+	if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+		return {.Missing_Record, 0, 0}, input_history.history_reader_next_point(&rec.reader)
+	}
 	return {}, 0
 }
 
@@ -1771,6 +1783,21 @@ replay_record_point :: proc "contextless" (reader: ^input_history.History_Reader
 		return record_header.point_number
 	}
 	return input_history.history_reader_next_point(reader)
+}
+
+// replay_stop_at_recorded_end finishes a replay cleanly when it reaches a
+// History_End written because recording stopped while the process was still
+// alive (Recorder_Stopped, Stint_Bound_Reached, Buffer_Full, or Revocation):
+// every recorded input point matched with zero divergences.
+// Caller holds NO locks.
+@(private = "file")
+replay_stop_at_recorded_end :: proc "contextless" (process_index: u32, reason: input_history.History_End_Reason) {
+	control_take()
+	taken := process_lock(process_index)
+	record_replay_end_locked(process_index, reason)
+	process_unlock(process_index, taken)
+	process_stop(process_index, .Holder, .None)
+	control_free()
 }
 
 // replay_stop_on_divergence records a divergence in the history header, tears
@@ -1862,35 +1889,29 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 	if mode == .Recording {
 		rip := thread.frame.rip
 		rsp := thread.frame.rsp
-		buffer_ok := record_refresh_point_copies_locked(cpu, process_index, thread)
+		buffer_ok := true
 		switch decoded.kind {
 		case .None:
 		case .Rdtsc:
 			cycles := cycles_now()
 			thread.frame.rax = u64(u32(cycles))
 			thread.frame.rdx = u64(u32(cycles >> 32))
-			thread.frame.rip += u64(decoded.length)
-			if buffer_ok {
-				buffer_ok = input_history.history_writer_append_cycle_counter(&rec.writer, rip, rsp, {
-					cycles              = cycles,
-					processor_auxiliary = 0,
-					is_rdtscp           = 0,
-				})
-			}
+			buffer_ok = input_history.history_writer_append_cycle_counter(&rec.writer, rip, rsp, {
+				cycles              = cycles,
+				processor_auxiliary = 0,
+				is_rdtscp           = 0,
+			})
 		case .Rdtscp:
 			cycles := cycles_now()
 			aux := replay_filter.RECORDED_PROCESSOR_AUXILIARY
 			thread.frame.rax = u64(u32(cycles))
 			thread.frame.rdx = u64(u32(cycles >> 32))
 			thread.frame.rcx = u64(aux)
-			thread.frame.rip += u64(decoded.length)
-			if buffer_ok {
-				buffer_ok = input_history.history_writer_append_cycle_counter(&rec.writer, rip, rsp, {
-					cycles              = cycles,
-					processor_auxiliary = aux,
-					is_rdtscp           = 1,
-				})
-			}
+			buffer_ok = input_history.history_writer_append_cycle_counter(&rec.writer, rip, rsp, {
+				cycles              = cycles,
+				processor_auxiliary = aux,
+				is_rdtscp           = 1,
+			})
 		case .Cpuid:
 			leaf := u32(thread.frame.rax)
 			subleaf := u32(thread.frame.rcx)
@@ -1900,18 +1921,22 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 			thread.frame.rbx = u64(filtered.ebx)
 			thread.frame.rcx = u64(filtered.ecx)
 			thread.frame.rdx = u64(filtered.edx)
-			thread.frame.rip += u64(decoded.length)
-			if buffer_ok {
-				buffer_ok = input_history.history_writer_append_cpuid(&rec.writer, rip, rsp, {
-					leaf    = leaf,
-					subleaf = subleaf,
-					eax     = filtered.eax,
-					ebx     = filtered.ebx,
-					ecx     = filtered.ecx,
-					edx     = filtered.edx,
-				})
-			}
+			buffer_ok = input_history.history_writer_append_cpuid(&rec.writer, rip, rsp, {
+				leaf    = leaf,
+				subleaf = subleaf,
+				eax     = filtered.eax,
+				ebx     = filtered.ebx,
+				ecx     = filtered.ecx,
+				edx     = filtered.edx,
+			})
 		}
+		// Refresh point copies after the trapped instruction record so replay
+		// applies these Page_Delta records strictly after this instruction and
+		// never prematurely at the end of an earlier kernel entry.
+		if buffer_ok && rec.point_copy_count > 0 {
+			buffer_ok = record_refresh_point_copies_locked(cpu, process_index, thread)
+		}
+		thread.frame.rip += u64(decoded.length)
 		process_unlock(process_index, taken)
 		if !buffer_ok {
 			record_end_on_buffer_full(process_index)
@@ -1920,12 +1945,6 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 	}
 
 	// Replaying mode: snapshot record once into private scratch before checking.
-	if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-		point := input_history.history_reader_next_point(&rec.reader)
-		process_unlock(process_index, taken)
-		replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
-		return true
-	}
 	actual := input_history.Replay_Actual_Event {
 		instruction_address = thread.frame.rip,
 		stack_pointer       = thread.frame.rsp,
@@ -1944,6 +1963,11 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 		actual.cpuid_subleaf = u32(thread.frame.rcx)
 	}
 	rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
+	if end_reason, reached := input_history.replay_reached_recording_end(read_ok && has_more, rec.reader.read_offset == rec.reader.header.written_bytes, rec_kind, rec_payload); reached {
+		process_unlock(process_index, taken)
+		replay_stop_at_recorded_end(process_index, end_reason)
+		return true
+	}
 	check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 	if check.divergence != .None {
 		point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
@@ -1989,6 +2013,12 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 		thread.frame.rcx = u64(payload.ecx)
 		thread.frame.rdx = u64(payload.edx)
 		thread.frame.rip += u64(decoded.length)
+	}
+	if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+		point := input_history.history_reader_next_point(&rec.reader)
+		process_unlock(process_index, taken)
+		replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+		return true
 	}
 	process_unlock(process_index, taken)
 	return true
@@ -2045,10 +2075,6 @@ record_self_stop_completion_locked :: proc "contextless" (cpu: ^Processor, threa
 	}
 	return_time := intrinsics.atomic_load(&time_milliseconds)
 	thread.replay_return_time = return_time
-	if !record_refresh_point_copies_locked(cpu, process_index, thread) {
-		record_replay_end_locked(process_index, .Buffer_Full)
-		return
-	}
 	entry := input_history.Kernel_Completion_Payload {
 		command_kind             = command.kind,
 		command_tag              = command.tag,
@@ -2062,8 +2088,9 @@ record_self_stop_completion_locked :: proc "contextless" (cpu: ^Processor, threa
 }
 
 // record_kernel_completion records one executed kernel command (or a
-// zero-command wait entry) and refreshes point copies. Called from enter()
-// or run() with NO locks held.
+// zero-command wait entry). Point copies are refreshed at record_leave_input_point
+// after every completion of this entry so every Page_Delta follows its event.
+// Called from enter() or run() with NO locks held.
 record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread, command: ring.Record, outcome: call_outcome.Call_Outcome, completion_values: [7]u64) {
 	process_index := thread.process
 	process := &processes[process_index]
@@ -2075,7 +2102,7 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 		return
 	}
 	thread.replay_return_time = return_time
-	buffer_ok := record_refresh_point_copies_locked(cpu, process_index, thread)
+	buffer_ok := true
 	copied_slice: []u8
 	copied_address: u64
 	if buffer_ok {
@@ -2147,6 +2174,9 @@ record_received_mapping_write_locked :: proc "contextless" (cpu: ^Processor, pro
 	for page in u64(0) ..< pending.page_count {
 		virtual_address := pending.virtual_address + page * PAGE_SIZE
 		seen := received_page_bytes_locked(rec, mapping, virtual_address)
+		if seen == &RECORD_ZERO_PAGE {
+			continue
+		}
 		written, changed, ok := input_history.page_delta_encode(virtual_address, &RECORD_ZERO_PAGE, seen, cpu.page_delta_scratch[:])
 		if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, thread.frame.rip, thread.frame.rsp, cpu.page_delta_scratch[:written])) {
 			return false
@@ -2627,41 +2657,45 @@ shared_writer_wait_mirror_locked :: proc "contextless" (rec: ^Process_Record_Sta
 // its processor got an interrupt, the leave stays asked, and the caller
 // passes through schedule before it tries again. true: no writer runs until
 // the next input point, and the history holds each range that the writers
-// wrote at this point. Caller holds no lock.
+// wrote and each changed point copy at this point. Caller holds no lock.
 record_leave_input_point :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> bool {
 	process_index := thread.process
 	rec := &process_records[process_index]
-	if !intrinsics.atomic_load(&rec.has_shared_writers) {
-		thread.record_outside_point = true
-		return true
-	}
 	taken := process_lock(process_index)
-	if rec.mode != .Recording || rec.gate.state != .Active {
+	if rec.mode != .Recording {
 		process_unlock(process_index, taken)
 		thread.record_outside_point = true
 		return true
 	}
-	if !rec.writers_held {
-		intrinsics.atomic_store(&rec.writers_held_since, intrinsics.atomic_load(&time_milliseconds))
-		intrinsics.atomic_store(&rec.writers_held, true)
+	if rec.gate.state == .Active {
+		if !rec.writers_held {
+			intrinsics.atomic_store(&rec.writers_held_since, intrinsics.atomic_load(&time_milliseconds))
+			intrinsics.atomic_store(&rec.writers_held, true)
+		}
+		thread_id := thread_index(thread)
+		if shared_writers_on_processor_locked(rec) {
+			_ = replay_filter.recorded_thread_request_leave(&rec.gate, thread_id)
+			shared_writer_wait_mirror_locked(rec)
+			process_unlock(process_index, taken)
+			shared_writers_preempt(process_index)
+			return false
+		}
+		switch replay_filter.recorded_thread_leave_input_point(&rec.gate, thread_id) {
+		case .Left, .Refused:
+			// Refused: the gate does not hold this thread (it left already).
+		case .Must_Wait_Writers:
+			process_unlock(process_index, taken)
+			shared_writers_preempt(process_index)
+			return false
+		}
 	}
-	thread_id := thread_index(thread)
-	if shared_writers_on_processor_locked(rec) {
-		_ = replay_filter.recorded_thread_request_leave(&rec.gate, thread_id)
-		shared_writer_wait_mirror_locked(rec)
-		process_unlock(process_index, taken)
-		shared_writers_preempt(process_index)
-		return false
+	buffer_ok := true
+	if rec.gate.state == .Active {
+		buffer_ok = shared_pages_diff_locked(cpu, rec, thread)
 	}
-	switch replay_filter.recorded_thread_leave_input_point(&rec.gate, thread_id) {
-	case .Left, .Refused:
-		// Refused: the gate does not hold this thread (it left already).
-	case .Must_Wait_Writers:
-		process_unlock(process_index, taken)
-		shared_writers_preempt(process_index)
-		return false
+	if buffer_ok && rec.point_copy_count > 0 {
+		buffer_ok = record_refresh_point_copies_locked(cpu, process_index, thread)
 	}
-	buffer_ok := shared_pages_diff_locked(cpu, rec, thread)
 	thread.record_outside_point = true
 	process_unlock(process_index, taken)
 	if !buffer_ok {
@@ -2748,6 +2782,17 @@ shared_writers_any_ready :: proc "contextless" (rec: ^Process_Record_State) -> b
 	return false
 }
 
+// replay_context_budget_handle_locked reads handles[CONTEXT_BUDGET] from the
+// context page of process_index, or 0 when no context page is mapped. Caller
+// holds the process lock.
+@(private = "file")
+replay_context_budget_handle_locked :: proc "contextless" (process_index: u32) -> u64 {
+	if frame := replay_shared_page_frame_locked(process_index, op.CONTEXT_ADDRESS); frame != 0 {
+		return u64(direct(frame, op.Context).handles[op.CONTEXT_BUDGET])
+	}
+	return 0
+}
+
 // replay_context_page_clear_locked zeroes the context page of a process that
 // has not run, before the history writes the context of the record there.
 // Caller holds the process lock.
@@ -2814,54 +2859,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread.in_enter = true
 	wait_begin(thread)
 
-	// Pure wait/yield entry with no commands in the ring.
-	if ring.empty(&thread.ring.commands) {
-		taken := process_lock(process_index)
-		rec := &process_records[process_index]
-		if rec.mode != .Replaying {
-			process_unlock(process_index, taken)
-			return
-		}
-		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-			point := input_history.history_reader_next_point(&rec.reader)
-			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
-			return
-		}
-		actual := input_history.Replay_Actual_Event {
-			kind                = .Kernel_Completion,
-			instruction_address = thread.frame.rip,
-			stack_pointer       = thread.frame.rsp,
-			command_kind        = 0,
-			command_tag         = 0,
-			command_values      = {0 = thread.frame.rdi},
-		}
-		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
-		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
-		if check.divergence != .None {
-			point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
-			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
-			return
-		}
-		kc, _, kc_ok := input_history.kernel_completion_from_payload(rec_payload)
-		if !kc_ok {
-			point := rec_header.point_number
-			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
-			return
-		}
-		thread.replay_return_time = kc.return_time_milliseconds
-		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-			point := input_history.history_reader_next_point(&rec.reader)
-			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
-			return
-		}
-		process_unlock(process_index, taken)
-		return
-	}
-
+	executed_any := false
 	for _ in 0 ..< ring.CAPACITY {
 		if ring.empty(&thread.ring.commands) {
 			break
@@ -2874,16 +2872,11 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if !popped {
 			break
 		}
+		executed_any = true
 		taken := process_lock(process_index)
 		rec := &process_records[process_index]
 		if rec.mode != .Replaying {
 			process_unlock(process_index, taken)
-			return
-		}
-		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-			point := input_history.history_reader_next_point(&rec.reader)
-			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
 			return
 		}
 		actual := input_history.Replay_Actual_Event {
@@ -2895,6 +2888,11 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			command_values      = command.values,
 		}
 		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
+		if end_reason, reached := input_history.replay_reached_recording_end(read_ok && has_more, rec.reader.read_offset == rec.reader.header.written_bytes, rec_kind, rec_payload); reached {
+			process_unlock(process_index, taken)
+			replay_stop_at_recorded_end(process_index, end_reason)
+			return
+		}
 		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 		if check.divergence != .None {
 			point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
@@ -2938,6 +2936,9 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			case .Real_Local:
 				switch operation {
 				case .Memory_Create:
+					if rec.recorded_budget_handle != 0 && rec.real_budget_handle != 0 && exec_command.values[0] == rec.recorded_budget_handle {
+						exec_command.values[0] = rec.real_budget_handle
+					}
 					run_local = true
 					record_new_handle = true
 				case .Memory_Map:
@@ -2960,6 +2961,9 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 				case .Memory_Commit:
 					if real_mem, mapped := replay_filter.replay_handle_map_lookup(&rec.handle_map, exec_command.values[0]); mapped {
 						exec_command.values[0] = real_mem
+					}
+					if rec.recorded_budget_handle != 0 && rec.real_budget_handle != 0 && exec_command.values[1] == rec.recorded_budget_handle {
+						exec_command.values[1] = rec.real_budget_handle
 					}
 					run_local = true
 				case .Memory_Unmap, .Process_Stop, .Thread_Stop:
@@ -3022,6 +3026,55 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			values = kc.completion_values,
 		}
 		_ = ring.push(&thread.ring.completions, completion)
+	}
+
+	// Zero-command entry (empty commands ring or full completions ring on
+	// iteration 0): match the recorded zero-command Kernel_Completion before
+	// applying post-entry Page_Delta records.
+	if !executed_any {
+		taken := process_lock(process_index)
+		rec := &process_records[process_index]
+		if rec.mode != .Replaying {
+			process_unlock(process_index, taken)
+			return
+		}
+		actual := input_history.Replay_Actual_Event {
+			kind                = .Kernel_Completion,
+			instruction_address = thread.frame.rip,
+			stack_pointer       = thread.frame.rsp,
+			command_kind        = 0,
+			command_tag         = 0,
+			command_values      = {0 = thread.frame.rdi},
+		}
+		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
+		if end_reason, reached := input_history.replay_reached_recording_end(read_ok && has_more, rec.reader.read_offset == rec.reader.header.written_bytes, rec_kind, rec_payload); reached {
+			process_unlock(process_index, taken)
+			replay_stop_at_recorded_end(process_index, end_reason)
+			return
+		}
+		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
+		if check.divergence != .None {
+			point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
+			return
+		}
+		kc, _, kc_ok := input_history.kernel_completion_from_payload(rec_payload)
+		if !kc_ok {
+			point := rec_header.point_number
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return
+		}
+		thread.replay_return_time = kc.return_time_milliseconds
+		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+			point := input_history.history_reader_next_point(&rec.reader)
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return
+		}
+		process_unlock(process_index, taken)
+		return
 	}
 
 	// Apply any trailing Page_Delta records before returning to user mode.

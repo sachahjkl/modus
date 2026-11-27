@@ -182,6 +182,9 @@ start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 	session_table_record(slot.process_slot, slot.process_serial, work.principal)
 	slot.module_offset = work.entry.offset
 	slot.module_size = work.entry.size
+	if work.hold == .For_Replay {
+		return
+	}
 	slot.budget = work.wiring.budget
 	slot.wiring_memory = work.wiring.wiring_memory
 	if wiring_process != nil {
@@ -728,7 +731,11 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 		// of the machine; each other process draws with its presentation
 		// record (src/md/features/module_settings.md).
 		page := .Settings in grants || .Clock in grants ? Text_Settings_Page.Machine : Text_Settings_Page.Presentation
-		text_settings_give(work.mappings[:], &work.mapping_count, &work.values, page, work.slot)
+		// A replay process holds no writable mapping shared with another
+		// process: Replay_Start maps a private stand-in page at
+		// PRESENTATION_PAGE_ADDRESS from the recorded history head.
+		presentation_slot := work.hold == .For_Replay ? nil : work.slot
+		text_settings_give(work.mappings[:], &work.mapping_count, &work.values, page, presentation_slot)
 	}
 	// The plan values of the owner of the module: its defaults and its
 	// locks, read-only, written at this start (plan_values.odin).
@@ -798,11 +805,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	// other process with a root ring (Connect, Principals, Debugger) holds
 	// no handle of this service for its budget: the handle table of this
 	// service holds one handle for each process that it keeps one for.
-	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.start_grant_set.grants)
-	// The collector pays the rings of the audit of a wide grant, which the
-	// root service asks in its name (src/md/features/wide_grants.md, "The
-	// path of a grant, end to end").
-	work.wiring.keep_budget ||= work.name == "collector"
+	work.wiring.keep_budget = work.hold != .For_Replay && (root_ring.sender_allowed(.Wire, work.start_grant_set.grants) || work.name == "collector")
 	held_entry: ^u64
 	switch work.hold {
 	case .None:
@@ -817,7 +820,11 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		intrinsics.mem_zero_volatile(&seeded_values, size_of(seeded_values))
 		intrinsics.mem_zero_volatile(&work.values.values, size_of(work.values.values))
 	}
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, from_budget = session_budget_of(work.principal), wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
+	// A replay holds no ring shared with the root or wiring services; its
+	// recorded ready and wiring ring handles are answered from the history.
+	wiring_arg := work.hold == .For_Replay ? nil : &work.wiring
+	ready_ring := work.hold == .For_Replay ? nil : &work.slot.ready
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, from_budget = session_budget_of(work.principal), wiring = wiring_arg, held_entry = held_entry, ready = ready_ring)
 	if status == .Succeeded {
 		start_budget_note(work.slot, start_budget)
 		work.slot.budget_unbounded = work.budget_unbounded

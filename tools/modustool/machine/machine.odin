@@ -239,6 +239,11 @@ Step_Kind :: enum {
 	// last Wait, and check each oracle (operation_sequences.odin). text: ""
 	// for the seed sequences, or the file of one sequence to replay.
 	Operation_Sequences,
+	// Extract a recorded kernel input history for process `text` from
+	// machine.memory_file into `build/replay_<part>_<process>.history` and
+	// verify it through `modustool replay <part> <process>` against
+	// `expected` ("clean" or "diverged").
+	Export_Replay_History,
 }
 
 // The seed of the step Power_Loss_Arm and of the loss of power
@@ -2781,6 +2786,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// A time of a film, for its viewer: the scenario of a test has
 			// no such step, and waits for a condition (film.odin).
 			time.sleep(time.Duration(step.milliseconds) * time.Millisecond)
+		case .Export_Replay_History:
+			if !replay_export_and_verify_from_machine(machine, step.text, step.expected) {
+				return false
+			}
 		}
 		free_all(context.temp_allocator)
 	}

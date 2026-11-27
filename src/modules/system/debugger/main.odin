@@ -89,11 +89,12 @@ import "modus:system"
 // into memory of this service of its size: 2048 pages hold an object of
 // 8 MiB, and a larger one, up to DEBUG_OBJECT_BYTES_LIMIT, takes the
 // pages that the budget of this service has, or is refused with a line of
-// the log. The input history of a record, HISTORY_PAGES, 16 pages, and the
-// point copies that the kernel takes from its budget, POINT_COPY_PAGES, 32
-// pages. The rest: the page tables of the mappings, and the call ring and
-// the call region of the connection that reads the debug object.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2128, processes = 1, threads = 1}
+// the log. The input history of a record, HISTORY_PAGES, 128 pages, the
+// point copies and shared baselines that the kernel takes from its budget
+// (96 pages), and stand-in mappings for replaying a window surface at 1.25x
+// scale (2500 pages). The rest: the page tables of the mappings, and the call
+// ring and the call region of the connection that reads the debug object.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4800, processes = 1, threads = 1}
 
 PROCESS_SLOTS_SEARCHED :: 256 // The process slots that an attach searches for the name.
 THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one process.

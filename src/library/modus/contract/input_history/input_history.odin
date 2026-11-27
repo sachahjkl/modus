@@ -189,10 +189,12 @@ History_End_Payload :: struct {
 }
 #assert(size_of(History_End_Payload) == 24)
 
-// The most pages of one shared mapping: the kernel keeps one baseline frame
-// for each shared page and one frame for each point copy, so a mapping with
-// more pages cannot be recorded.
-SHARED_MAPPING_PAGE_LIMIT :: u64(64)
+// Format property: largest page count of one shared or received mapping. Covers
+// a double-buffered reference-screen window surface (4050 pages) and a 4 MiB
+// terminal text region (1024 pages) mapped without an external writer; mappings
+// with an external writer stay bounded by the kernel's point-copy and
+// shared-page capacities.
+SHARED_MAPPING_PAGE_LIMIT :: u64(4096)
 
 // Payload of History_Record_Kind.Shared_Mapping. The head of a history holds
 // one for each mapping of the recorded process whose pages another process
@@ -980,14 +982,40 @@ replay_end_check :: proc "contextless" (has_recorded: bool, recorded_kind: Histo
 	return {.None, 0, 0}
 }
 
+// replay_reached_recording_end says whether the next record of the history is a
+// terminating History_End at the end of the written stream, written because
+// recording stopped while the process was still running (Recorder_Stopped,
+// Stint_Bound_Reached, Buffer_Full, or Revocation). Reaching such an end on
+// replay after matching every prior input point is clean replay completion
+// rather than a divergence. Normal_Stop means the recorded process stopped
+// itself before this event, and at_stream_end == false means trailing records
+// follow the end record, so both stay divergences.
+replay_reached_recording_end :: proc "contextless" (has_recorded: bool, at_stream_end: bool, recorded_kind: History_Record_Kind, recorded_payload: []u8) -> (reason: History_End_Reason, reached: bool) {
+	if !has_recorded || !at_stream_end || recorded_kind != .History_End {
+		return .None, false
+	}
+	_, end_reason, _, ok := history_end_from_payload(recorded_payload)
+	if !ok {
+		return .None, false
+	}
+	switch end_reason {
+	case .Recorder_Stopped, .Stint_Bound_Reached, .Buffer_Full, .Revocation:
+		return end_reason, true
+	case .None, .Normal_Stop, .Divergence:
+		return .None, false
+	}
+	return .None, false
+}
+
 // The most stand-in mappings of one replay: one for each page that the
 // kernel keeps for one record (a point copy or a shared page), so a record
 // whose pages are each a mapping of their own can still be replayed. The
 // kernel checks this sum against its own capacities.
 STAND_IN_MAPPING_CAPACITY :: 96
-// The most pages of all the stand-in mappings of one replay: the point copies
-// and the shared pages that the kernel keeps for one record.
-STAND_IN_PAGE_LIMIT :: u64(96)
+// Format property: total pages across all stand-in mappings of one replay.
+// Holds up to two window surfaces during a resize plus point copies and shared
+// rings.
+STAND_IN_PAGE_LIMIT :: u64(8192)
 
 // One range of private pages that a replay maps where the record had a
 // shared mapping.

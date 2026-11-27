@@ -189,6 +189,7 @@ Work :: struct {
 
 work: Work
 running: bool // For the first thread: a line runs.
+single_threaded: bool // True when the second thread was refused (single-thread recording or 1-thread budget).
 
 // call_stoppable_enter marks one wait of the second thread that Escape can
 // stop; call_stoppable_leave ends it. Nested waits keep the count above 0
@@ -282,8 +283,15 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	commands_start()
 	palette_provider_start() // palette_provider.odin
 	if _, status := system.thread_start(run_lines, nil, LINE_THREAD_STACK_PAGES); status != .Succeeded {
-		system.log_fact(.Info, Thread_Not_Started{})
-		system.stop(.Failed)
+		if status == .Wrong_State || status == .Budget_Or_Capacity_Exhausted {
+			// Single-thread mode (for example while recorded by the kernel or
+			// started with a one-thread budget): evaluate each entered line
+			// inline on the main thread.
+			single_threaded = true
+		} else {
+			system.log_fact(.Info, Thread_Not_Started{})
+			system.stop(.Failed)
+		}
 	}
 	print("kernel console. A command is a typed function: try help()\n")
 	edit_show()
@@ -523,9 +531,19 @@ line_enter :: proc "contextless" () {
 		work.count = copy(work.text[:], text)
 		work.since = system.time()
 		intrinsics.atomic_store(&work.cancel, 0)
-		running = true
-		intrinsics.atomic_add(&work.started, 1)
-		second_thread_wake()
+		if single_threaded {
+			intrinsics.atomic_add(&work.started, 1)
+			services_check()
+			run_line(string(work.text[:work.count]))
+			intrinsics.atomic_store(&work.cancel, 0)
+			palette_line_ended()
+			palette_table_write()
+			intrinsics.atomic_add(&work.finished, 1)
+		} else {
+			running = true
+			intrinsics.atomic_add(&work.started, 1)
+			second_thread_wake()
+		}
 	}
 	history_place = 0
 	line_editor.line_clear(&line)

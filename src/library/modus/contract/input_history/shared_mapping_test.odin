@@ -152,7 +152,7 @@ stand_in_mapping_set_refuses_overlaps_and_bounds :: proc(t: ^testing.T) {
 	_, _, ok = stand_in_mapping_set_find(nil, base)
 	testing.expect(t, !ok)
 
-	// The bound of the pages: 6 + 64 + 26 = 96, then one more page is refused.
+	// The bound of the pages: fill to STAND_IN_PAGE_LIMIT, then one more page is refused.
 	testing.expect(t, stand_in_mapping_set_add(&set, {virtual_address = 0x100_0000, page_count = SHARED_MAPPING_PAGE_LIMIT}, .Read_Write, 10))
 	testing.expect(t, stand_in_mapping_set_add(&set, {virtual_address = 0x200_0000, page_count = STAND_IN_PAGE_LIMIT - 6 - SHARED_MAPPING_PAGE_LIMIT}, .Read_Write, 11))
 	testing.expect_value(t, set.page_count, STAND_IN_PAGE_LIMIT)
@@ -910,7 +910,7 @@ divergence_report_of_history_edges :: proc(t: ^testing.T) {
 @(test)
 stand_in_mapping_set_holds_96_and_removes_by_place :: proc(t: ^testing.T) {
 	testing.expect_value(t, STAND_IN_MAPPING_CAPACITY, 96)
-	testing.expect_value(t, STAND_IN_PAGE_LIMIT, u64(96))
+	testing.expect_value(t, STAND_IN_PAGE_LIMIT, u64(8192))
 	set := new(Stand_In_Mapping_Set)
 	defer free(set)
 	page := HISTORY_PAGE_SIZE

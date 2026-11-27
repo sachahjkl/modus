@@ -13,13 +13,16 @@ import "modustool:foundation"
 // code of the system (src/md/features/record_and_replay.md).
 //
 // Outside a hypervisor, rdrand and rdseed cannot be trapped when a process is
-// recorded. The code of the system executes them only inside random.entropy_gather
-// in src/library/modus/random/entropy.odin (for the seed of the root
-// service). Every other Odin source, assembly file, and LLVM IR unit of src/
-// is refused if it invokes rdrand or rdseed through an asm template, an
-// intrinsic, or raw assembly.
+// recorded. The shipped code of the system executes them only inside
+// random.entropy_gather in src/library/modus/random/entropy.odin (for the seed
+// of the root service). One test-only divergence probe
+// (src/modules/tests/replay_rdrand_probe/main.odin, excluded from every release
+// boot image) is also allowed so live machine tests verify that executing
+// rdrand during a recorded run triggers an exact replay divergence. Every
+// other Odin source, assembly file, and LLVM IR unit of src/ is refused.
 
 PROCESSOR_RANDOM_ALLOWED_FILE :: foundation.SOURCE_FOLDER_PUBLIC + "/random/entropy.odin"
+PROCESSOR_RANDOM_ALLOWED_PROBE_FILE :: foundation.TEST_MODULE_SOURCES + "replay_rdrand_probe/main.odin"
 
 PROCESSOR_RANDOM_CHECKED_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL,
@@ -216,10 +219,11 @@ assembly_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> b
 	return true
 }
 
-// processor_random_path_allowed says if a repository-relative path is the one
-// file allowed to execute rdrand and rdseed.
+// processor_random_path_allowed says if a repository-relative path is allowed
+// to execute rdrand and rdseed: random.entropy_gather for shipped code, or the
+// test-only planted divergence probe excluded from release boot images.
 processor_random_path_allowed :: proc(relative_path: string) -> bool {
-	return relative_path == PROCESSOR_RANDOM_ALLOWED_FILE
+	return relative_path == PROCESSOR_RANDOM_ALLOWED_FILE || relative_path == PROCESSOR_RANDOM_ALLOWED_PROBE_FILE
 }
 
 // processor_random_uses_of_tree scans every non-test Odin source and every

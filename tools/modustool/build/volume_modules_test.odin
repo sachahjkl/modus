@@ -55,7 +55,7 @@ modules_needed_for_volumes_filters_accurately_and_refuses_unknowns :: proc(t: ^t
 	testing.expect(t, filter_has_module(release_filter, "root"), "secure_boot needs root")
 	testing.expect(t, filter_has_module(release_filter, "compositor"), "secure_boot needs compositor")
 	testing.expect(t, filter_has_module(release_filter, "test_callee"), "secure_boot pulls transitive import test_callee of lonely")
-	for excluded in ([]string{"flood", "probe", "shortage", "plan_applier", "stops_refused", "visitor", "test_caller", "display_conformance", "kernel_without_return_check", foundation.KERNEL_EDGE_COUNTERS_MODULE}) {
+	for excluded in ([]string{"flood", "probe", "shortage", "plan_applier", "stops_refused", "visitor", "test_caller", "display_conformance", "replay_probe", "replay_rdrand_probe", "kernel_without_return_check", foundation.KERNEL_EDGE_COUNTERS_MODULE}) {
 		testing.expectf(t, !filter_has_module(release_filter, excluded), "secure_boot volume excludes %s", excluded)
 	}
 

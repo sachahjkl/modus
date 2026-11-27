@@ -263,7 +263,8 @@ module_builds := [?]Module_Build {
 	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true, menu = .Log_Only},
 	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", category = .Service, entry = true, image = true},
 	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
-	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true},
+	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true, children = {"console"}},
+	{name = "replay_rdrand_probe", source = TEST_MODULE_SOURCES + "replay_rdrand_probe", entry = true, image = true},
 	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
 	// Log_Only: no window; the console shows what its guest did.
 	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true, menu = .Log_Only},

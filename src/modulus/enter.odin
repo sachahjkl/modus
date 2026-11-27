@@ -29,8 +29,7 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	intrinsics.atomic_add(&processes[thread.process].entries, 1)
 	thread.in_enter = true
 	wait_begin(thread)
-	pure_wait := ring.empty(&thread.ring.commands)
-	enter_commands_loop(cpu, index, pure_wait)
+	enter_commands_loop(cpu, index)
 }
 
 // enter_command_finish records the operation event, error record, and history
@@ -67,11 +66,13 @@ enter_command_finish :: proc "contextless" (cpu: ^Processor, index: u32, command
 }
 
 // enter_commands_loop executes pending commands of thread.ring.commands and
-// finishes the wait phase. Shared by enter() and commit_continuation_complete()
+// finishes the wait phase. Shared by enter() and commit_continuation_resume()
 // when a resumable 1 GiB commit yields across schedule() and finishes on a
-// later stint.
-enter_commands_loop :: proc "contextless" (cpu: ^Processor, index: u32, pure_wait: bool) {
+// later stint. executed_already is true when a continued command already
+// completed for this kernel entry.
+enter_commands_loop :: proc "contextless" (cpu: ^Processor, index: u32, executed_already := false) {
 	thread := &threads[index]
+	executed_any := executed_already
 	for _ in 0 ..< ring.CAPACITY {
 		if ring.empty(&thread.ring.commands) {
 			break
@@ -90,6 +91,7 @@ enter_commands_loop :: proc "contextless" (cpu: ^Processor, index: u32, pure_wai
 		if !ok {
 			break
 		}
+		executed_any = true
 		// The event point of an operation (events.odin): with no rule of
 		// this kind, one branch on a word of this processor; with a rule for
 		// another process only, one more load and branch. No read of the
@@ -102,7 +104,7 @@ enter_commands_loop :: proc "contextless" (cpu: ^Processor, index: u32, pure_wai
 		outcome: call_outcome.Call_Outcome
 		handled := false
 		if command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Memory_Commit) {
-			handled, outcome, values[0] = commit_continuation_try_begin(cpu, index, command, pure_wait, started)
+			handled, outcome, values[0] = commit_continuation_try_begin(cpu, index, command, started)
 		}
 		if !handled {
 			outcome = command_run(index, command, &values)
@@ -113,7 +115,7 @@ enter_commands_loop :: proc "contextless" (cpu: ^Processor, index: u32, pure_wai
 	}
 	// A word that changed before the wait: the thread reads it again.
 	wait_end(thread, thread.frame.rdi)
-	if pure_wait && intrinsics.atomic_load(&thread.record_mode) == .Recording {
+	if !executed_any && intrinsics.atomic_load(&thread.record_mode) == .Recording {
 		if intrinsics.atomic_load(&thread.state) == .Waiting {
 			// Defer recording until the thread wakes in run() so the history
 			// captures post-wake milliseconds and post-wake point copies.

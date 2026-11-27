@@ -262,7 +262,7 @@ process_flags_of :: proc "contextless" (item: ^Started) -> (flags: ws.Process_Fl
 // the process's wiring ring (if any), and its read-only module slice in the
 // boot image.
 wiring_register_process :: proc "contextless" (item: ^Started) {
-	if wiring_process == nil || item == nil || item == wiring_process || item.process == 0 || item.process_slot == 0 || item.process_serial == 0 {
+	if wiring_process == nil || item == nil || item == wiring_process || item.held_for_replay || item.process == 0 || item.process_slot == 0 || item.process_serial == 0 {
 		return
 	}
 	token, status := give_through_service_ring(wiring_process.process, wiring_ring_memory, item.process, {.Give}, &wiring_process.service_ring_ready)

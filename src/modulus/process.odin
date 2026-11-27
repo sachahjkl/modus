@@ -408,7 +408,6 @@ Commit_Continuation_Kind :: enum u8 {
 Commit_Continuation :: struct {
 	kind:                   Commit_Continuation_Kind,
 	region:                 u32,   // Holds one region reference while kind != .None.
-	pure_wait:              bool,  // Original enter() pure_wait flag for remaining loop.
 	command:                ring.Record, // Popped Memory_Commit command (tag, recording, events).
 	started_cycles:         u64,   // Non-zero when OBSERVED_OPERATION wanted an event.
 	changed_total:          u64,   // Pages committed by this call (completion.values[0]).

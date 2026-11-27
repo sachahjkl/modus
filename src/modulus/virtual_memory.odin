@@ -542,7 +542,7 @@ COMMIT_CONTINUATION_SLICES_TOTAL :: u32(frame_runs.RUN_1G_PAGES / frame_runs.RUN
 // takes a 1 GiB run (when pdpe1gb and quota permit) or enters the 512-slice
 // fallback path, releases all locks, and runs the first 2 MiB slice before
 // yielding through schedule().
-commit_continuation_try_begin :: proc "contextless" (cpu: ^Processor, index: u32, command: ring.Record, pure_wait: bool, started_cycles: u64) -> (handled: bool, outcome: call_outcome.Call_Outcome, changed: u64) {
+commit_continuation_try_begin :: proc "contextless" (cpu: ^Processor, index: u32, command: ring.Record, started_cycles: u64) -> (handled: bool, outcome: call_outcome.Call_Outcome, changed: u64) {
 	thread := &threads[index]
 	if intrinsics.atomic_load(&thread.record_mode) != .None {
 		return false, .Succeeded, 0
@@ -621,7 +621,6 @@ commit_continuation_try_begin :: proc "contextless" (cpu: ^Processor, index: u32
 				thread.commit_continuation = {
 					kind           = .Run_1G,
 					region         = region_index,
-					pure_wait      = pure_wait,
 					command        = command,
 					started_cycles = started_cycles,
 					changed_total  = frame_runs.RUN_1G_PAGES,
@@ -641,7 +640,6 @@ commit_continuation_try_begin :: proc "contextless" (cpu: ^Processor, index: u32
 		thread.commit_continuation = {
 			kind                   = .Fallback_2M,
 			region                 = region_index,
-			pure_wait              = pure_wait,
 			command                = command,
 			started_cycles         = started_cycles,
 			changed_total          = needed,
@@ -830,7 +828,7 @@ commit_continuation_resume :: proc "contextless" (cpu: ^Processor, thread: ^Thre
 	commit_continuation_install_and_release(thread)
 	index := thread_index(thread)
 	if enter_command_finish(cpu, index, cont.command, cont.started_cycles, .Succeeded, {0 = cont.changed_total}) {
-		enter_commands_loop(cpu, index, cont.pure_wait)
+		enter_commands_loop(cpu, index, executed_already = true)
 	}
 	if intrinsics.atomic_load(&thread.stop_requested) || intrinsics.atomic_load(&thread.state) != .Ready || intrinsics.atomic_load(&thread.control_stops) != 0 || cpu.slice_left == 0 {
 		schedule_on_a_fresh_stack(cpu)

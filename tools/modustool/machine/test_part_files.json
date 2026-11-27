@@ -33,6 +33,7 @@
   "kernel_events": ["kernel_events_scenario.odin"],
   "self_tests": ["self_tests_scenario.odin"],
   "debugger": ["debugger_scenario.odin"],
+  "record_replay": ["record_replay_scenario.odin"],
   "ranges": ["ranges_scenario.odin"],
   "quic-real": ["quic_real.odin"],
   "outside_module": [],

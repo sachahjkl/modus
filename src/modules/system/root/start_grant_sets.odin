@@ -517,8 +517,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The process that the test of the debugger debugs.
 	{name = "debug_target", scope = .Session},
 	// The test of the record and the replay of a process with a shared
-	// writer: it starts its readers from the boot image.
-	{name = "replay_probe", scope = .Session, grants = {.Image}},
+	// writer and of the console: it starts its readers and console children
+	// from the boot image and gives them the log.
+	{name = "replay_probe", scope = .Session, grants = {.Image}, terms = {log_gives = true}},
+	// The test-only planted hardware randomness divergence probe for record
+	// and replay: executes rdrand without checking cpuid and needs no grant.
+	{name = "replay_rdrand_probe", scope = .Session},
 	// A guest in its own memory.
 	{name = "guest_demo", scope = .Session},
 	// A child of `frames`: its starter gives it its handles.

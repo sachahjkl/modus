@@ -680,7 +680,8 @@ line_evaluate :: proc "contextless" () -> Value {
 	if !pipe_stage_precheck(&line_tree, line_tree.root) {
 		return {}
 	}
-	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host(), &line_eval_buffers)
+	stack_limit := uint(single_threaded ? 32 * 1024 : lex_evaluator.EVALUATION_STACK_BYTES)
+	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host(), &line_eval_buffers, stack_bytes = stack_limit)
 	value, ok := lex_evaluator.line_force(&line_evaluation)
 	// A line that the bound stopped measures the bound, not the line.
 	if line_evaluation.refusal.refusal != .Stack_Exceeded && line_evaluation.stack_deepest > deepest_line_stack {

@@ -635,20 +635,20 @@ replay_shared_mapping_check_refuses_each_difference :: proc(t: ^testing.T) {
 
 // The record keeps the set of the stand-in mappings that its replay will
 // make, and refuses a received mapping that the replay could not hold: past
-// 96 mappings, past 96 pages, past 64 pages in one mapping, or over a
-// mapping of the set. An unmap makes room at once.
+// STAND_IN_MAPPING_CAPACITY mappings, past STAND_IN_PAGE_LIMIT pages, past
+// SHARED_MAPPING_PAGE_LIMIT pages in one mapping, or over a mapping of the
+// set. An unmap makes room at once.
 @(test)
 record_set_of_stand_ins_refuses_past_the_capacity :: proc(t: ^testing.T) {
 	page := HISTORY_PAGE_SIZE
 	set := new(Stand_In_Mapping_Set)
 	defer free(set)
-	// The head: a shared writer of 64 pages.
+	// First mapping up to SHARED_MAPPING_PAGE_LIMIT pages, then a second
+	// mapping filling up to STAND_IN_PAGE_LIMIT pages.
 	testing.expect(t, stand_in_mapping_set_add(set, {virtual_address = 0x100_0000, page_count = SHARED_MAPPING_PAGE_LIMIT}, .Read_Write, 1, 1))
-	// Mappings after the start, one page each, up to the bound of the pages.
-	for index in 0 ..< int(STAND_IN_PAGE_LIMIT - SHARED_MAPPING_PAGE_LIMIT) {
-		testing.expect(t, stand_in_mapping_set_admits(set, {virtual_address = 0x200_0000 + u64(index) * 2 * page, page_count = 1}))
-		testing.expect(t, stand_in_mapping_set_add(set, {virtual_address = 0x200_0000 + u64(index) * 2 * page, page_count = 1}, .Read, u32(10 + index), 1))
-	}
+	remaining := STAND_IN_PAGE_LIMIT - SHARED_MAPPING_PAGE_LIMIT
+	testing.expect(t, stand_in_mapping_set_admits(set, {virtual_address = 0x200_0000, page_count = remaining}))
+	testing.expect(t, stand_in_mapping_set_add(set, {virtual_address = 0x200_0000, page_count = remaining}, .Read, 10, 1))
 	testing.expect_value(t, set.page_count, STAND_IN_PAGE_LIMIT)
 	before := set^
 	testing.expect(t, !stand_in_mapping_set_admits(set, {virtual_address = 0x300_0000, page_count = 1}))

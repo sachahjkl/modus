@@ -22,6 +22,28 @@ Divergence_Checked :: struct {
 	verdict: [16]u8,
 }
 
+@(log_fact = "replay_probe: the console recorded a typed line and replayed alone to the end of its history with 0 divergences: {verdict}")
+Console_Checked :: struct {
+	verdict: [16]u8,
+}
+
+// What the recorded console history holds.
+@(log_fact = "replay_probe: detail: the console record: {points} input points, {shared_mappings} shared mappings, {shared_deltas} page deltas, end {end_reason}")
+Console_Recorded :: struct {
+	points:          u64,
+	shared_mappings: u64,
+	shared_deltas:   u64,
+	end_reason:      u64,
+}
+
+// How the console replay with no terminal ended.
+@(log_fact = "replay_probe: detail: the console replay: end {end_reason}, divergence kind {divergence_kind}, point {divergence_point}")
+Console_Replayed :: struct {
+	end_reason:       u64,
+	divergence_kind:  u64,
+	divergence_point: u64,
+}
+
 // What the record of the reader holds.
 @(log_fact = "replay_probe: detail: the record: {points} input points, {shared_deltas} deltas of the shared page, {cycle_reads} reads of the cycle counter, {cpuid_reads} of cpuid")
 Probe_Recorded :: struct {
@@ -52,7 +74,7 @@ Probe_Divergence :: struct {
 }
 
 // Each case held.
-@(log_fact = "replay_probe: ok, {cases} cases: a record with a shared writer, its replay with no writer, and the first divergence")
+@(log_fact = "replay_probe: ok, {cases} cases: a record with a shared writer, its replay with no writer, the first divergence, and the console")
 Probe_Held :: struct {
 	cases: u64,
 }

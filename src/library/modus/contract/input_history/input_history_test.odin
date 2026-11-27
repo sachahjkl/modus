@@ -699,3 +699,45 @@ shared_page_delta_and_the_end_of_a_history :: proc(t: ^testing.T) {
 	check = replay_step_check(actual, has_more, {}, .None, nil)
 	testing.expect_value(t, check.divergence, Divergence_Kind.Missing_Record)
 }
+
+// replay_reached_recording_end distinguishes recordings stopped while the process
+// was still running (clean completion when replay reaches a terminating
+// History_End at the end of the written stream) from Normal_Stop, Divergence,
+// trailing-record histories (at_stream_end == false), damaged payloads, and
+// non-end records.
+@(test)
+replay_reached_recording_end_classifies_every_end_reason :: proc(t: ^testing.T) {
+	// Refusals and edges first: missing record, non-end kinds, damaged payload,
+	// and a History_End followed by trailing records (at_stream_end == false).
+	r, reached := replay_reached_recording_end(false, true, .History_End, nil)
+	testing.expect(t, !reached && r == .None)
+	r, reached = replay_reached_recording_end(true, true, .Kernel_Completion, nil)
+	testing.expect(t, !reached && r == .None)
+	r, reached = replay_reached_recording_end(true, true, .History_End, nil)
+	testing.expect(t, !reached && r == .None)
+	bad := History_End_Payload{reason = u32(max(History_End_Reason)) + 1}
+	r, reached = replay_reached_recording_end(true, true, .History_End, ([^]u8)(&bad)[:size_of(bad)])
+	testing.expect(t, !reached && r == .None)
+	early := History_End_Payload{reason = u32(History_End_Reason.Recorder_Stopped)}
+	r, reached = replay_reached_recording_end(true, false, .History_End, ([^]u8)(&early)[:size_of(early)])
+	testing.expect(t, !reached && r == .None)
+
+	// Normal_Stop and Divergence must NOT count as clean early recording end.
+	for non_clean in ([?]History_End_Payload{
+		{reason = u32(History_End_Reason.None)},
+		{reason = u32(History_End_Reason.Normal_Stop)},
+		{reason = u32(History_End_Reason.Divergence), divergence_kind = u32(Divergence_Kind.Unexpected_Arguments)},
+	}) {
+		p := non_clean
+		r, reached = replay_reached_recording_end(true, true, .History_End, ([^]u8)(&p)[:size_of(p)])
+		testing.expectf(t, !reached && r == .None, "reason %d must not finish replay cleanly", p.reason)
+	}
+
+	// Recording stops while alive at the end of the stream count as clean completion.
+	for clean in ([?]History_End_Reason{.Recorder_Stopped, .Stint_Bound_Reached, .Buffer_Full, .Revocation}) {
+		p := History_End_Payload{reason = u32(clean)}
+		r, reached = replay_reached_recording_end(true, true, .History_End, ([^]u8)(&p)[:size_of(p)])
+		testing.expect(t, reached)
+		testing.expect_value(t, r, clean)
+	}
+}
