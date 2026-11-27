@@ -18,6 +18,11 @@ HOLDER_MODULE :: "panel_display"
 PLAN_NAME :: "panel display"
 POLL_MILLISECONDS :: 100
 
+// Page tables for mapping the boot image plus the plans call connection.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables and plans call connection mapped before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
+
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
 	system.log_fact(.Error, Wrong{value = value}, text)

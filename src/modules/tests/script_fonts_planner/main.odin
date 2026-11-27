@@ -38,6 +38,11 @@ import "modus:storage"
 import "modus:system"
 
 NAMES_A_CUT_SET :: #config(SCRIPT_FONTS_PLANNER_NAMES_A_CUT_SET, false)
+
+// Page tables for mapping the boot image, plans call connection, and font outlines.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables, plans connection, and font outlines mapping before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
 // The bytes that the cut set lacks: one word, so the cut set keeps the
 // alignment of the whole one.
 CUT_BYTES :: 8

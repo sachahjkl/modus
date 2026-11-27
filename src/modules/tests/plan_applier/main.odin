@@ -49,6 +49,11 @@ import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
 import "modus:system"
 
+// Page tables for mapping the boot image plus the plans call connection.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables and plans call connection mapped before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
+
 // The module that the plan that commits names as the holder of Settings,
 // and the module of the image that does not fill that contract.
 HOLDER_MODULE :: "settings_stand_in"

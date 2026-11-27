@@ -18,6 +18,11 @@ import "modus:contract/isolated"
 import "modus:contract/module"
 import "modus:system"
 
+// Page tables for mapping the boot image plus the display call connection.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables and display call connection mapped before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
+
 // The bytes for the rows of window_grants: an answer would fill them.
 rows: [4096]u8
 

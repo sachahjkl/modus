@@ -35,6 +35,10 @@ PROCESS_NAME :: "notify_border_of_the_compositor"
 CARDS_LIMIT :: 3 // notifications.CARDS_PER_SOURCE_LIMIT, as the compositor states it.
 RATE_MILLISECONDS :: 500 // The rate of the queue of the compositor: one card in 500 ms for each source.
 POST_LIMIT :: 12 // The posts of the loop: more means that the compositor never refused.
+// Page tables for mapping the boot image plus the compositor call connection.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables and compositor call connection mapped before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
 
 connection: system.Call_Connection
 file: []u8

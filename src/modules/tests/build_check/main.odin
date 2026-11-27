@@ -32,6 +32,11 @@ import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:system"
 
+// Page tables for mapping the boot image plus the recipes call connection.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables and recipes call connection mapped before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
+
 requests: ring.Ring
 next_tag: u32 = 1
 connection: system.Call_Connection

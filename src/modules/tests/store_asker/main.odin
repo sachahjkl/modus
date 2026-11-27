@@ -19,6 +19,11 @@ import "modus:contract/module"
 import "modus:contract/powerbox"
 import "modus:system"
 
+// Page tables for mapping the boot image plus the display call connection.
+BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables and display call connection mapped before exit.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	connection, file := display_connect(ctx)
