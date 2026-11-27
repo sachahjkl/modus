@@ -98,10 +98,15 @@ PICTURE_PAGES :: 128
 #assert(PICTURE_PAGES == 2 * PICTURE_PIXELS / PIXELS_IN_A_PAGE)
 #assert(2 * PICTURE_PIXELS % PIXELS_IN_A_PAGE == 0)
 
-// The three canvases of the screen, the four window surfaces and the two
-// picture canvases allocated before the measure rounds; the tool counts the
-// module, its load and its thread.
-MODULE_START_OBJECTS :: [?]system.Start_Object{SCREEN_PAGES, SCREEN_PAGES, SCREEN_PAGES, WINDOW_PAGES, PICTURE_PAGES}
+// The private glyph cache allocated by the imported drawing module on the first
+// drawn glyph during the measure rounds.
+GLYPH_CACHE_PAGES :: 354
+#assert(GLYPH_CACHE_PAGES == display.TEXT_MEMORY_PAGES)
+
+// The three canvases of the screen, the four window surfaces, the two picture
+// canvases, and the drawing glyph cache allocated before the measure rounds;
+// the tool counts the module, its load and its thread.
+MODULE_START_OBJECTS :: [?]system.Start_Object{SCREEN_PAGES, SCREEN_PAGES, SCREEN_PAGES, WINDOW_PAGES, PICTURE_PAGES, GLYPH_CACHE_PAGES}
 
 // The frame of a window and the bar, in the form of the compositor
 // (src/modules/system/compositor/main.odin, frame_records).
