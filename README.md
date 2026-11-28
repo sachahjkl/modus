@@ -1,11 +1,42 @@
-<p align="center"><picture><source media="(prefers-color-scheme: light)" srcset="resources/logo/modus_light_transparent.png"><img src="resources/logo/modus_transparent.png" width="256" alt="The mark of modus: a heron of square pixels that stands on one leg in water, a blue body, a pale neck, an orange beak and a violet crest and tail, above the name modus in square letters"></picture></p>
+<p align="center"><picture><source media="(prefers-color-scheme: light)" srcset="resources/logo/modus_light_transparent.png"><img src="resources/logo/modus_transparent.png" width="220" alt="The mark of modus: a heron of square pixels that stands on one leg in water, a blue body, a pale neck, an orange beak and a violet crest and tail, above the name modus in square letters"></picture></p>
 
 # modus
 
-A fast, modular operating system, sandboxed by default.
-Processes call each other's functions with typed values, never with text to parse, and a console calls the same functions by name. Every change that a process makes is kept at once, with its earlier versions, so no process has a save action. It starts to a desktop with a console, developer tools and demonstration modules.
+<p align="center">
+<a href="https://github.com/sachahjkl/modus/actions/workflows/ci.yml"><img src="https://github.com/sachahjkl/modus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/sachahjkl/modus/releases/latest"><img src="https://img.shields.io/github/v/release/sachahjkl/modus?color=1d57ba" alt="release"></a>
+<a href="https://modus.systems/"><img src="https://img.shields.io/badge/try_live-modus.systems-56b6c2" alt="try live at modus.systems"></a>
+<a href="https://cache.modus.systems/"><img src="https://img.shields.io/badge/cache-cache.modus.systems-3b82f6" alt="object cache"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-555" alt="MIT"></a>
+</p>
 
-The project has three names: **`modus`** is the operating system (the kernel, the system services, the desktop, the modules and the tools), **`modulus`** is its kernel, and **`lex`** is its language and runtime.
+An operating system that generalizes programmatic interfaces between programs, called modules, sandboxed by default.
+Every compiled program is one self-describing module format: the same file runs as an in-process library, an isolated sandboxed call host, a background service, a console command, or a desktop window. Processes call each other's functions with typed values and explicit, revocable handles instead of parsing text streams or sharing a global filesystem, and every write commits atomically with earlier versions kept so no program has a Save button.
+
+![The desktop: console, life, monitor and plasma. The title bar of the window in front goes from blue to a darker blue; the others are quiet](docs/screenshots/desktop.png)
+
+Try the desktop live in your browser at **[modus.systems](https://modus.systems/)**, or boot it locally with `nix develop -c modustool run`.
+
+The project has three names: **`modus`** is the operating system (the kernel, services, desktop, modules and tools), **`modulus`** is its kernel, and **`lex`** is its console language and runtime.
+
+## The idea: one programmatic interface for every module
+
+On Unix and Windows, libraries, CLI tools, daemons, GUI apps and remote services each use a different interface. Calling another program means formatting flags, parsing stdout, or writing ad-hoc IPC, while every process inherits ambient access to `PATH`, `/etc` and user files.
+
+`modus` replaces that split with one mechanism:
+
+- **One module format, every role.** Every module carries a typed binary schema of its exports (parameters, records, enums, ranges, error records, and `Call_Outcome`). The exact same compiled file runs as a direct library (`load("tally")`), a sandboxed call host (`isolate("tally")`), a long-lived service (`connect("settings")`), a console command, a desktop window, or a tool an AI agent discovers through `manual`.
+- **Typed calls across every border.** Processes pass typed records, tables and lent handles — never text to parse. The console evaluates the same calls interactively, filters typed tables directly, and runs the same exports from another machine over QUIC (`modustool call <key> "monitor.processes()"`):
+
+```
+settings.set(appearance = .light)
+where(grants("notes"), state = "held")
+monitor.processes()
+```
+
+- **Zero ambient access.** A process starts with zero handles: no global filesystem, no `PATH`, no network, no screen. Every capability is a revocable handle with exact rights and a reserved memory, processor and log budget.
+- **Atomic versioned storage, no Save button.** Each change in a private store commits atomically on disk with earlier versions kept and per-principal encryption. A power loss leaves the state before or after a commit, never half of one.
+- **Small, counted kernel.** `modulus` exposes 36 ring-based operations (checked by CI). Drivers, storage, networking, QUIC/TLS 1.3, the compositor and the module loader all run as user-space processes.
 
 ## What makes it different
 
@@ -13,31 +44,36 @@ Each claim names the module that shows it, and its picture below.
 
 | Claim | Shown by |
 |---|---|
+| **One module in four roles.** A module describes each export, so the console completes it, checks its arguments and calls it; the same file is a process, a service, a library and a sandboxed call host. | `tally` in its four roles (`docs/screenshots/roles.png`); the completion list of the console (`docs/screenshots/console_completion.png`) |
 | **A process starts with nothing.** It holds only the handles that it was given, with their rights, and every gift can be taken back through each chain of copies. | `rights`: the kernel does the operations that the rights allow and refuses the others (`docs/screenshots/rights.png`). `origin`: twelve cases of copies, gifts and revocations (`docs/screenshots/origin.png`) |
-| **A command is a function.** No process parses the text of another. A module describes each export, so the console completes it, checks its arguments and calls it; the same file is a process, a service, a library and a sandboxed process. | `tally` in its four roles (`docs/screenshots/roles.png`); the completion list of the console (`docs/screenshots/console_completion.png`) |
-| **No save action.** Each change is one commit that a loss of power never cuts in half, and the state before it stays as a version. | The test process `persistence_check` after a restart and after a loss of power (`docs/screenshots/persistence_check.png`, `docs/screenshots/power_loss.png`); the notes and the versions of a note (`docs/screenshots/notes.png`, `docs/screenshots/notes_versions.png`); the versions of an object (`docs/screenshots/storage_versions.png`) |
+| **No save action.** Each change is one commit that a loss of power never cuts in half, and the state before it stays as a version. | `persistence_check` after a restart and after a loss of power (`docs/screenshots/persistence_check.png`, `docs/screenshots/power_loss.png`); `notes` and its versions (`docs/screenshots/notes.png`, `docs/screenshots/notes_versions.png`); the versions of an object (`docs/screenshots/storage_versions.png`) |
 | **A fault stops one process, never the system.** Drivers are processes too, and a module that faults in an isolated call stops alone. A process can repair its own faults from a record in memory. | An isolated call that faults or loops (`docs/screenshots/isolated.png`); the fault ring (`docs/screenshots/fault_ring.png`); the disk driver as a process (`docs/screenshots/disk.png`) |
-| **A small, counted kernel.** A short list of kernel operations that the tool counts (`docs/PROPERTIES.md`, "1. Small kernel with a small, counted interface"), asked through one ring for each thread, with no driver, file system or network code in the kernel. | `threads`, `locks` and `scheduler` (`docs/screenshots/threads.png`, `docs/screenshots/locks.png`, `docs/screenshots/scheduler.png`) |
+| **A small, counted kernel.** 36 kernel operations that the tool counts (`docs/PROPERTIES.md`, "1. Small kernel with a small, counted interface"), asked through one ring for each thread, with no driver, file system or network code in the kernel. | `threads`, `locks` and `scheduler` (`docs/screenshots/threads.png`, `docs/screenshots/locks.png`, `docs/screenshots/scheduler.png`) |
 | **A verified start.** The boot program checks a signed list of the hashes of the system before the kernel starts, and stops with the file and its two hashes when one differs. | The boot display, and a start that fails (`docs/screenshots/boot.png`, `docs/screenshots/boot_fails.png`) |
-| **Errors that say why.** A refusal of the kernel, the loader, a module or a service is a record with the argument, its value and what was found; a fault gives its stack trace with source lines. | `errors` (`docs/screenshots/errors.png`); `inspect` on a process that faulted (`docs/screenshots/inspect_stopped.png`) |
+| **Errors that say why.** A refusal of the kernel, the loader, a module or a service carries a typed `Call_Outcome` and an error record with the argument, its value and what was found; a fault gives its stack trace with source lines. | `errors` (`docs/screenshots/errors.png`); `inspect` on a process that faulted (`docs/screenshots/inspect_stopped.png`) |
 
 ## Try it
 
-The Nix flake supplies every tool. `nix develop`, then `modustool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the start menu with the button "start" of the bar. The section "Use" lists the other commands.
+- **In your browser:** open **[modus.systems](https://modus.systems/)** to boot the full desktop in WebAssembly with no install.
+- **In a local VM:** the Nix flake supplies every tool. Run `nix develop -c modustool run` (or `modustool run --console` for a headless serial console). In the machine, type `help()` in the console, or open the start menu from the bar.
+- **On real hardware:** write a signed release disk image to a USB key ([`docs/INSTALL.md`](docs/INSTALL.md)).
 
-To start the system on a real machine, write the disk image of a release to a USB key: [`docs/INSTALL.md`](docs/INSTALL.md).
-
-[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `modustool release_number` prints the newest release. [`ROADMAP.md`](ROADMAP.md) lists the planned work: what is in work now, what comes next, and what comes later.
+[`CHANGELOG.md`](CHANGELOG.md) lists each release (`modustool release_number` prints the newest). [`ROADMAP.md`](ROADMAP.md) lists planned work, and [`docs/COURSE.md`](docs/COURSE.md) walks through the system step by step.
 
 ## Pictures
 
-![The desktop: console, life, monitor and plasma. The title bar of the window in front goes from blue to a darker blue; the others are quiet](docs/screenshots/desktop.png)
-
 ![The palette: the key super opens it, one list of the modules, of the windows, of the commands of the console and of the settings narrows at each typed key, Enter starts the chosen module, brings the chosen window to the front or runs the chosen command](docs/screenshots/palette.png)
 
-![The start menu: the button of the bar opens it](docs/screenshots/menu.png)
-
 ![The interface package: each element live, the draw table of the last frame, the damage by difference](docs/screenshots/interface_elements.png)
+
+![The completion list of the console: "mcnt" matches monitor.count by a fuzzy match, the matched letters lit, each name with what it is and its signature](docs/screenshots/console_completion.png)
+
+![One module in each role: the file of tally runs as a process, as a service, as a library in the console and as a sandboxed process](docs/screenshots/roles.png)
+
+<details>
+<summary>All 63 screenshots from the machine test</summary>
+
+![The start menu: the button of the bar opens it](docs/screenshots/menu.png)
 
 ![The text of the system is a vector font with subpixel bands (Paper Mono by default); the process settings changes it to Spleen 8x16 and back while every window runs](docs/screenshots/font_vector.png)
 
@@ -60,8 +96,6 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 ![Revocation: the console takes back what it lent, and the root service ends the machine grant of a process that runs](docs/screenshots/revocation.png)
 
 ![A line runs in the second thread of the console: the console keeps the keys, and Escape stops the call](docs/screenshots/running.png)
-
-![The completion list of the console: "mcnt" matches monitor.count by a fuzzy match, the matched letters lit, each name with what it is and its signature](docs/screenshots/console_completion.png)
 
 | | |
 |---|---|
@@ -92,8 +126,6 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 ![The log: records with a time, a process and a level, each value of a text in the color of its kind](docs/screenshots/log.png)
 
 ![One ring between two threads: the records of one second and the kernel entries that they cost, for two capacities and two ways to wait](docs/screenshots/flow.png)
-
-![One module in each role: the file of tally runs as a process, as a service, as a library in the console and as a sandboxed process](docs/screenshots/roles.png)
 
 ![The manual shows the documentation that each module carries in its file](docs/screenshots/manual.png)
 
@@ -160,6 +192,8 @@ The repository holds no picture of the same window with the pointer theme Posy's
 ![The hall of fame: the people whose work inspired modus, each on a card with a portrait and its credit, or with no picture](docs/screenshots/hall_of_fame.png)
 
 ![The process heron: the heron of the mark held at a frame of its dash, in the form of the run, in whole square cells, with the lines of the cells and the cells that the frame changed](docs/screenshots/heron.png)
+
+</details>
 
 `modustool screenshots` takes these pictures from the machine test of the full check.
 
