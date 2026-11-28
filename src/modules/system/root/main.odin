@@ -1469,6 +1469,10 @@ control_ring_serve :: proc "contextless" () {
 		switch control_word {
 		case .Appearance_Next:
 			settings_appearance_next_start() // text_settings.odin
+		case .Keyboard_Layout_Set:
+			if !settings_keyboard_layout_from_control(record.values) {
+				system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
+			}
 		case .Screen_Budget_Release:
 			screen_budget_release(.Compositor, record.values[0], role_holder_name(.Display)) // screen_budgets.odin
 		case .Wide_Grant_Screen_Answer:

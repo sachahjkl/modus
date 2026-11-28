@@ -80,9 +80,11 @@ VALUE_PASS :: op.CONTEXT_VALUE_SETTINGS_PASS // The process `settings`: the word
 // the context value VALUE_PASS. The values cross the context, so they are
 // stated; pass_of_word is their one border.
 Pass :: enum u64 {
-	Window          = 0, // No pass: the window and the service.
-	Boot            = 1, // At boot: read the kept record, write the page, stop.
-	Appearance_Next = 2, // The tile of the Control Center: the next appearance (appearance_next), kept and written, then stop.
+	Window                 = 0, // No pass: the window and the service.
+	Boot                   = 1, // At boot: read the kept record, write the page, stop.
+	Appearance_Next        = 2, // The tile of the Control Center: the next appearance (appearance_next), kept and written, then stop.
+	Keyboard_Layout_US     = 3, // Display-holder hint: set keyboard layout to United_States, write the page, stop.
+	Keyboard_Layout_French = 4, // Display-holder hint: set keyboard layout to French, write the page, stop.
 }
 
 // pass_of_word is the border of the context value VALUE_PASS: a word that
@@ -109,11 +111,11 @@ start_answer :: proc "contextless" (asked: Pass, running: bool, running_pass: Pa
 		return .Start
 	}
 	switch running_pass {
-	case .Boot, .Appearance_Next:
+	case .Boot, .Appearance_Next, .Keyboard_Layout_US, .Keyboard_Layout_French:
 		switch asked {
 		case .Window:
 			return .Wait_For_Pass
-		case .Boot, .Appearance_Next:
+		case .Boot, .Appearance_Next, .Keyboard_Layout_US, .Keyboard_Layout_French:
 			return .Refuse
 		}
 	case .Window:
@@ -122,7 +124,7 @@ start_answer :: proc "contextless" (asked: Pass, running: bool, running_pass: Pa
 			return .Raise_Window
 		case .Appearance_Next:
 			return .Raise_Window_At_Appearance
-		case .Boot:
+		case .Boot, .Keyboard_Layout_US, .Keyboard_Layout_French:
 			return .Refuse
 		}
 	}

@@ -316,6 +316,19 @@ Appearance_Next_Kept :: struct {
 @(log_fact = "settings: the next appearance of the Control Center keeps nothing: the settings page holds a value that its setting does not have, or was never stable")
 Appearance_Next_Page_Refused :: struct {}
 
+// A keyboard layout hint pass updated the keyboard layout on the settings page.
+@(log_fact = "settings: keyboard layout hint: {before} to {after}; {store}")
+Keyboard_Layout_Hint_Kept :: struct {
+	before: [8]u8,
+	after:  [8]u8,
+	store:  [32]u8,
+}
+#assert(size_of(Keyboard_Layout_Hint_Kept{}.before) == VALUE_NAME_FIELD_BYTES && size_of(Keyboard_Layout_Hint_Kept{}.store) == STORE_WORDS_FIELD_BYTES)
+
+// A keyboard layout hint pass found an unreadable settings page and kept nothing.
+@(log_fact = "settings: keyboard layout hint keeps nothing: the settings page holds a value that its setting does not have, or was never stable")
+Keyboard_Layout_Hint_Page_Refused :: struct {}
+
 // The window cannot be resized: the limits that this process gave were
 // refused, or the command ring of the window was full.
 @(log_fact = "settings: the window stays fixed: {cause}")

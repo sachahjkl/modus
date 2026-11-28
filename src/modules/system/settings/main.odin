@@ -1103,6 +1103,24 @@ appearance_next_pass :: proc "contextless" () -> ! {
 	system.stop(kept ? .Done : .Failed)
 }
 
+// keyboard_layout_pass applies a keyboard layout hint (from the browser
+// machine host via compositor and root) on the shared settings page and stops.
+keyboard_layout_pass :: proc "contextless" (target: settings.Keyboard_Layout) -> ! {
+	choice, read_ok := settings.read(page)
+	if !read_ok {
+		system.log_fact(.Warning, Keyboard_Layout_Hint_Page_Refused{})
+		system.stop(.Failed)
+	}
+	before := choice.keyboard_layout
+	choice.keyboard_layout = target
+	given: settings.Given
+	given.values[.Keyboard_Layout] = true
+	kept := change(choice, choice.zone_offset_minutes, given)
+	result := kept ? (has_store ? Keep_Result.Kept_In_Store : .Kept_In_Session) : .Refused
+	system.log_fact(.Info, Keyboard_Layout_Hint_Kept{before = value_kinds.text_field(settings.value_name_of(.Keyboard_Layout, u32(before)), VALUE_NAME_FIELD_BYTES), after = value_field(choice, .Keyboard_Layout), store = store_field(result)})
+	system.stop(kept ? .Done : .Failed)
+}
+
 // boot_pass reads the record of the store and writes the page: the pass of
 // the boot, with no window.
 boot_pass :: proc "contextless" () -> ! {
@@ -2464,6 +2482,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case .Appearance_Next:
 		_ = kept_load()
 		appearance_next_pass()
+	case .Keyboard_Layout_US:
+		_ = kept_load()
+		keyboard_layout_pass(.United_States)
+	case .Keyboard_Layout_French:
+		_ = kept_load()
+		keyboard_layout_pass(.French)
 	}
 	if has_store {
 		display.fonts_map_from_storage(&store)

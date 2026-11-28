@@ -238,6 +238,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	zone_follow()
 	started := system.nanoseconds()
+	// Publish an immediate 1-second-accurate reading before waiting up to one
+	// second for the RTC second edge, so services starting at boot (such as the
+	// settings boot pass evaluating Auto appearance) see a valid UTC date right away.
+	if initial_reading, initial_ok := stable_read(); initial_ok {
+		if initial_seconds, secs_ok := seconds_of_reading(initial_reading); secs_ok {
+			initial_at_zero := initial_seconds * 1000 - i64(system.time())
+			date.write(page, .Real_Time_Clock, initial_at_zero)
+			system.word_wake(&page.change_count, system.WAKE_ALL)
+		}
+	}
 	at_zero, seconds, edge, valid := synchronize()
 	if !valid {
 		system.log_fact(.Error, Clock_Date_Not_Valid{})

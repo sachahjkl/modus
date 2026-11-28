@@ -2,6 +2,7 @@ package root
 
 import "modus:contract/root_ring"
 import "modus:contract/call_outcome"
+import "modus:contract/enum_word"
 import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:display"
@@ -86,6 +87,8 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 	}
 }
 
+settings_boot_pass_started: bool
+
 // settings_boot_pass_start starts the holder of the role Settings for its
 // boot pass: `settings` reads the settings kept in its private store,
 // writes the page, and stops. The storage service starts first, with the
@@ -95,6 +98,7 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 // names the role, so it reaches the holder that the plan of principal 0
 // gave, as each other row of a role does.
 settings_boot_pass_start :: proc "contextless" (values: ^[7]u64) -> call_outcome.Call_Outcome {
+	settings_boot_pass_started = true
 	decision, outcome := settings_pass_start(.Boot, principals.MACHINE, values)
 	switch decision {
 	case .Start:
@@ -160,6 +164,10 @@ settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pas
 settings_start_due: bool
 settings_start_due_principal: u64
 settings_start_due_budget_unbounded: bool
+// A keyboard layout hint from the display holder (for example the browser
+// machine host) waiting for the boot pass or another settings pass to finish.
+settings_keyboard_layout_due: bool
+settings_keyboard_layout_due_pass: settings.Pass
 
 // Who asks a start of `settings`: the desktop, whose start of the window
 // waits for a pass that runs, or another caller (a connection to the
@@ -230,13 +238,23 @@ settings_raise_ask :: proc "contextless" (item: ^Started, focus: display.Setting
 	return true
 }
 
-// settings_start_due_step starts the window of `settings` that waited for
-// a pass, once no process `settings` runs. The loop calls it after reap.
+// settings_start_due_step starts a pending keyboard layout pass or the window
+// of `settings` that waited for a pass, once no process `settings` runs.
+// The loop calls it after reap.
 settings_start_due_step :: proc "contextless" () {
-	if !settings_start_due {
+	if item, _ := settings_running(); item != nil {
 		return
 	}
-	if item, _ := settings_running(); item != nil {
+	if settings_keyboard_layout_due && (settings_boot_pass_started || start_policy_running() == nil) {
+		pass := settings_keyboard_layout_due_pass
+		settings_keyboard_layout_due = false
+		decision, outcome := settings_pass_start(pass, desktop_principal())
+		if decision == .Start && outcome != .Succeeded {
+			system.log_fact(.Warning, Keyboard_Layout_Hint_Not_Started{outcome = outcome})
+		}
+		return
+	}
+	if !settings_start_due {
 		return
 	}
 	settings_start_due = false
@@ -245,6 +263,45 @@ settings_start_due_step :: proc "contextless" () {
 	if outcome := start(role_holder_name(.Settings), settings_start_due_principal, budget_unbounded = due_unbounded); outcome != .Succeeded {
 		system.log_fact(.Warning, Settings_Due_Start_Failed{outcome = outcome})
 	}
+}
+
+// settings_keyboard_layout_from_control validates a Keyboard_Layout_Set control
+// record from the display holder and starts or queues the one-shot settings
+// pass after the boot pass so settings remains the single writer of the page.
+settings_keyboard_layout_from_control :: proc "contextless" (values: [7]u64) -> bool {
+	for index in 1 ..< len(values) {
+		if values[index] != 0 {
+			return false
+		}
+	}
+	layout, ok := enum_word.member_of_word(settings.Keyboard_Layout, values[0])
+	if !ok {
+		return false
+	}
+	pass: settings.Pass
+	switch layout {
+	case .United_States:
+		pass = .Keyboard_Layout_US
+	case .French:
+		pass = .Keyboard_Layout_French
+	}
+	if (!settings_boot_pass_started && start_policy_running() != nil) {
+		settings_keyboard_layout_due = true
+		settings_keyboard_layout_due_pass = pass
+		return true
+	}
+	if item, running_pass := settings_running(); item != nil {
+		if running_pass != .Window {
+			settings_keyboard_layout_due = true
+			settings_keyboard_layout_due_pass = pass
+		}
+		return true
+	}
+	decision, outcome := settings_pass_start(pass, desktop_principal())
+	if decision == .Start && outcome != .Succeeded {
+		system.log_fact(.Warning, Keyboard_Layout_Hint_Not_Started{outcome = outcome})
+	}
+	return true
 }
 
 // settings_appearance_next_start takes the press on the tile Appearance

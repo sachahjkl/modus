@@ -522,6 +522,9 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		append(&list, "-chardev", "stdio,id=console_serial,signal=off")
 		append(&list, "-serial", "chardev:console_serial")
 	} else {
+		// Use SDL with OpenGL scanout presentation for interactive desktop
+		// runs so QEMU avoids GTK's software Cairo 30ms refresh cap on Wayland.
+		append(&list, "-display", "sdl,gl=on")
 		append(&list, "-serial", "stdio")
 	}
 	// The window of a person always has the tablet: an absolute pointer,

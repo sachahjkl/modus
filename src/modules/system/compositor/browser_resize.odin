@@ -10,12 +10,17 @@ package compositor
 
 import "base:intrinsics"
 import info "modus:contract/boot_info"
+import "modus:contract/ring"
+import "modus:contract/settings"
+import "modus:display"
+import "modus:system"
 
 browser_resize_page: ^info.Browser_Resize_Page
 browser_resize_last_seq: u32
 browser_resize_pending_seq: u32
 browser_resize_ack_seq: u32
 browser_resize_frame_seq: u32
+browser_resize_keyboard_layout_last_seq: u32
 browser_resize_dirty: Rectangle
 browser_resize_has_dirty: bool
 
@@ -39,10 +44,45 @@ browser_resize_open :: proc "contextless" (framebuffer_pages: u64) {
 	browser_resize_last_seq = seq
 	browser_resize_pending_seq = seq
 	browser_resize_ack_seq = seq
+	browser_resize_keyboard_layout_last_seq = 0
 	candidate.ack_width = u32(screen.width)
 	candidate.ack_height = u32(screen.height)
 	// desktop_width and desktop_height are published in browser_resize_ack_after_frame once desktop_scale_take has run.
 	intrinsics.atomic_store_explicit(&candidate.ack_seq, seq, .Release)
+}
+
+// browser_keyboard_layout_poll checks for an updated browser keyboard layout
+// hint in the MODVRES1 control page and forwards valid layout choices to root.
+browser_keyboard_layout_poll :: proc "contextless" () {
+	page := browser_resize_page
+	if page == nil {
+		return
+	}
+	seq := intrinsics.atomic_load_explicit(&page.keyboard_layout_seq, .Acquire)
+	if seq == browser_resize_keyboard_layout_last_seq {
+		return
+	}
+	word := intrinsics.atomic_load_explicit(&page.keyboard_layout_hint, .Acquire)
+	hint, ok := info.browser_keyboard_layout_hint_of_word(word)
+	if !ok {
+		browser_resize_keyboard_layout_last_seq = seq
+		return
+	}
+	layout: settings.Keyboard_Layout
+	switch hint {
+	case .None:
+		browser_resize_keyboard_layout_last_seq = seq
+		return
+	case .United_States:
+		layout = .United_States
+	case .French:
+		layout = .French
+	}
+	if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Keyboard_Layout_Set), values = {0 = u64(layout)}}) {
+		// Control ring full: keep last_seq unchanged so the next poll retries.
+		return
+	}
+	browser_resize_keyboard_layout_last_seq = seq
 }
 
 // browser_resize_poll checks for a pending live viewport resize request from
@@ -52,6 +92,7 @@ browser_resize_poll :: proc "contextless" () -> bool {
 	if page == nil {
 		return false
 	}
+	browser_keyboard_layout_poll()
 	req_seq := intrinsics.atomic_load_explicit(&page.req_seq, .Acquire)
 	if req_seq == browser_resize_last_seq {
 		return false

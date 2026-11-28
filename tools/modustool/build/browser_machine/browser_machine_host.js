@@ -73,6 +73,8 @@ export const BROWSER_RESIZE_MIN_HEIGHT = 400;
 export const BROWSER_RESIZE_MAX_BYTES = BROWSER_RESIZE_MAX_WIDTH * BROWSER_RESIZE_MAX_HEIGHT * 4;
 export const BROWSER_RESIZE_TOTAL_PAGES = BROWSER_RESIZE_MAX_BYTES / 4096 + 1;
 export const BROWSER_RESIZE_MAGIC = 0x3153455256444f4dn; // The bytes "MODVRES1".
+export const BrowserKeyboardLayoutHint = { None: 0, United_States: 1, French: 2 };
+Object.freeze(BrowserKeyboardLayoutHint);
 export const BROWSER_RESIZE_OFFSETS = {
   magic: 0,
   max_width: 8,
@@ -90,9 +92,55 @@ export const BROWSER_RESIZE_OFFSETS = {
   dirty_h: 56,
   desktop_width: 60,
   desktop_height: 64,
+  keyboard_layout_hint: 68,
+  keyboard_layout_seq: 72,
 };
-export const BROWSER_RESIZE_PAGE_SIZE = 72;
+export const BROWSER_RESIZE_PAGE_SIZE = 80;
 const BROWSER_RESIZE_MIN_MEMORY_BYTES = 64 * 1024 * 1024;
+
+// Detect browser keyboard layout from KeyboardLayoutMap (Chromium), BCP-47
+// browser languages (French AZERTY locales only: fr, fr-FR, fr-BE), or a
+// keydown event where physical code and logical key distinguish AZERTY from QWERTY.
+export function normalizeKeyboardLayoutHint(hint) {
+  if (hint === BrowserKeyboardLayoutHint.United_States || hint === BrowserKeyboardLayoutHint.French) return hint;
+  return BrowserKeyboardLayoutHint.None;
+}
+
+export function detectKeyboardLayoutFromMap(layoutMap) {
+  if (!layoutMap || typeof layoutMap.get !== "function") return BrowserKeyboardLayoutHint.None;
+  const q = String(layoutMap.get("KeyQ") || "").toLowerCase();
+  const w = String(layoutMap.get("KeyW") || "").toLowerCase();
+  if (q === "a" && w === "z") return BrowserKeyboardLayoutHint.French;
+  if (q === "q" && w === "w") return BrowserKeyboardLayoutHint.United_States;
+  return BrowserKeyboardLayoutHint.None;
+}
+
+export function detectKeyboardLayoutFromLanguages(languages) {
+  const list = Array.isArray(languages) ? languages : (typeof languages === "string" ? [languages] : []);
+  for (const raw of list) {
+    if (typeof raw !== "string") continue;
+    const tag = raw.trim().toLowerCase().replace(/_/g, "-");
+    if (!tag) continue;
+    if (tag === "fr" || tag === "fr-fr" || tag === "fr-be" || tag.startsWith("fr-fr-") || tag.startsWith("fr-be-")) {
+      return BrowserKeyboardLayoutHint.French;
+    }
+    break;
+  }
+  return BrowserKeyboardLayoutHint.None;
+}
+
+export function detectKeyboardLayoutFromKeyEvent(event) {
+  if (!event || event.ctrlKey || event.altKey || event.metaKey) return BrowserKeyboardLayoutHint.None;
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  switch (event.code) {
+    case "KeyQ": return key === "a" ? BrowserKeyboardLayoutHint.French : key === "q" ? BrowserKeyboardLayoutHint.United_States : BrowserKeyboardLayoutHint.None;
+    case "KeyW": return key === "z" ? BrowserKeyboardLayoutHint.French : key === "w" ? BrowserKeyboardLayoutHint.United_States : BrowserKeyboardLayoutHint.None;
+    case "KeyA": return key === "q" ? BrowserKeyboardLayoutHint.French : key === "a" ? BrowserKeyboardLayoutHint.United_States : BrowserKeyboardLayoutHint.None;
+    case "KeyZ": return key === "w" ? BrowserKeyboardLayoutHint.French : key === "z" ? BrowserKeyboardLayoutHint.United_States : BrowserKeyboardLayoutHint.None;
+    case "Semicolon": return key === "m" ? BrowserKeyboardLayoutHint.French : BrowserKeyboardLayoutHint.None;
+    default: return BrowserKeyboardLayoutHint.None;
+  }
+}
 
 // The words of Memory_Kind and of Pixel_Format.
 export const MemoryKind = Object.freeze({ Reserved: 0, Free: 1, Boot: 2 });
@@ -526,7 +574,7 @@ export function physicalLayout({ kernelBytes, bootImageSize, framebufferWidth, f
 // writeBootRecord writes the boot record and its memory map: what the
 // boot program writes on a machine of x86-64. The memory of the kernel and
 // the framebuffer are in no range, as the firmware lists no device memory.
-export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidth, framebufferHeight, startNanoseconds, trustDescriptionHash = null }) {
+export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidth, framebufferHeight, startNanoseconds, trustDescriptionHash = null, keyboardLayoutHint = BrowserKeyboardLayoutHint.None }) {
   const view = new DataView(memory.buffer);
   const u64 = (address, value) => view.setBigUint64(address, BigInt(value), true);
   const u32 = (address, value) => view.setUint32(address, value, true);
@@ -567,6 +615,9 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
       u32(control + BROWSER_RESIZE_OFFSETS.ack_width, framebufferWidth);
       u32(control + BROWSER_RESIZE_OFFSETS.ack_height, framebufferHeight);
       u32(control + BROWSER_RESIZE_OFFSETS.ack_seq, 0);
+      const hint = normalizeKeyboardLayoutHint(keyboardLayoutHint);
+      u32(control + BROWSER_RESIZE_OFFSETS.keyboard_layout_hint, hint);
+      u32(control + BROWSER_RESIZE_OFFSETS.keyboard_layout_seq, hint !== BrowserKeyboardLayoutHint.None ? 1 : 0);
     }
   }
   u64(field("cycles_start"), startNanoseconds);
@@ -1433,7 +1484,7 @@ export class DomTerminalAccumulator {
 // its reset: the boot record then names the time of the page before the
 // kernel as its firmware time.
 export class BrowserMachine {
-  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, cacheBaseUrl = "", clockNanoseconds, idleWait, onSerialLine = () => {}, onConsoleLine = () => {}, onConsoleBytes = () => {}, onStop = () => {} }) {
+  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, keyboardLayoutHint = BrowserKeyboardLayoutHint.None, cacheBaseUrl = "", clockNanoseconds, idleWait, onSerialLine = () => {}, onConsoleLine = () => {}, onConsoleBytes = () => {}, onStop = () => {} }) {
     this.kernelModule = kernelModule;
     this.bootImage = bootImage ?? new Uint8Array(0);
     this.trustDescriptionHash = trustDescriptionHash;
@@ -1446,6 +1497,8 @@ export class BrowserMachine {
     this.requestedHeight = framebufferHeight;
     this.resizeSeq = 0;
     this.resizeAckSeq = 0;
+    this.keyboardLayoutHint = normalizeKeyboardLayoutHint(keyboardLayoutHint);
+    this.keyboardLayoutSeq = this.keyboardLayoutHint !== BrowserKeyboardLayoutHint.None ? 1 : 0;
     this.lastFrameSeq = 0;
     this.lastIdleBound = 0n;
     const clockBase = clockNanoseconds();
@@ -1533,6 +1586,7 @@ export class BrowserMachine {
       framebufferHeight: this.framebufferHeight,
       startNanoseconds: this.clockNanoseconds(),
       trustDescriptionHash: this.trustDescriptionHash,
+      keyboardLayoutHint: this.keyboardLayoutHint,
     });
     this.state = MachineState.Running;
     this.call(() => this.instance.exports.entry(record));
@@ -1605,6 +1659,25 @@ export class BrowserMachine {
     view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_height, clampedH, true);
     view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_seq, this.resizeSeq, true);
     // Wake input -> compositor immediately while preserving any held buttons.
+    this.keyboard.pointer(0, 0, this.keyboard.mouseButtons);
+    return true;
+  }
+
+  // setKeyboardLayoutHint publishes a BrowserKeyboardLayoutHint into the
+  // trailing MODVRES1 control page and wakes the compositor so settings applies
+  // the new layout without waiting for the next bar clock tick.
+  setKeyboardLayoutHint(hint) {
+    const normalized = normalizeKeyboardLayoutHint(hint);
+    if (normalized === BrowserKeyboardLayoutHint.None) return false;
+    if (normalized === this.keyboardLayoutHint && this.keyboardLayoutSeq > 0) return false;
+    this.keyboardLayoutHint = normalized;
+    if (!this.memory || !this.layout || !this.layout.framebufferResizeControl) return true;
+    const view = new DataView(this.memory.buffer);
+    const base = this.layout.framebufferResizeControl;
+    this.keyboardLayoutSeq = (this.keyboardLayoutSeq + 1) >>> 0;
+    if (this.keyboardLayoutSeq === 0) this.keyboardLayoutSeq = 1;
+    view.setUint32(base + BROWSER_RESIZE_OFFSETS.keyboard_layout_hint, normalized, true);
+    view.setUint32(base + BROWSER_RESIZE_OFFSETS.keyboard_layout_seq, this.keyboardLayoutSeq, true);
     this.keyboard.pointer(0, 0, this.keyboard.mouseButtons);
     return true;
   }

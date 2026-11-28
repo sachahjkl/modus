@@ -681,7 +681,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				client_add(record)
 			case .Client_Remove:
 				client_remove(system.Handle(record.values[0]))
-			case .None, .Start, .Stop, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Appearance_Next, .Settings_Raise, .Screen_Budget_Give, .Screen_Budget_Release, .Wide_Grant_Screen_Show, .Wide_Grant_Screen_Answer, .Wide_Grant_Mark, .Wide_Grant_Revoke_Pressed, .Session_Reset:
+			case .None, .Start, .Stop, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Appearance_Next, .Settings_Raise, .Screen_Budget_Give, .Screen_Budget_Release, .Wide_Grant_Screen_Show, .Wide_Grant_Screen_Answer, .Wide_Grant_Mark, .Wide_Grant_Revoke_Pressed, .Session_Reset, .Keyboard_Layout_Set:
 			}
 		}
 

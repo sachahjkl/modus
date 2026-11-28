@@ -151,6 +151,12 @@ Appearance_Next_Not_Started :: struct {
 	outcome: call_outcome.Call_Outcome,
 }
 
+// A keyboard layout hint from the display holder did not start settings.
+@(log_fact = "root: the keyboard layout hint did not start settings (outcome {outcome})")
+Keyboard_Layout_Hint_Not_Started :: struct {
+	outcome: call_outcome.Call_Outcome,
+}
+
 @(log_fact = "root: cannot start the TPM service: status {status}")
 Tpm_Service_Start_Failed :: struct {
 	status: call_outcome.Call_Outcome,

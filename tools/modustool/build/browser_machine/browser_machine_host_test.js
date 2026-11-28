@@ -527,6 +527,71 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   expect(ps2Wheel.queue.length % 4 === 0 && ps2Wheel.queue.length <= 1024, "PS/2 IntelliMouse queue stays 4-byte aligned under flood");
 }
 
+// Browser keyboard layout auto-detection (KeyboardLayoutMap, BCP-47 languages,
+// runtime keydown disambiguation, and MODVRES1 control-page publication).
+{
+  const H = host.BrowserKeyboardLayoutHint;
+  expect(host.normalizeKeyboardLayoutHint(H.None) === H.None, "None hint normalizes to None");
+  expect(host.normalizeKeyboardLayoutHint(H.United_States) === H.United_States, "US hint accepted");
+  expect(host.normalizeKeyboardLayoutHint(H.French) === H.French, "French hint accepted");
+  for (const bad of [-1, 3, 99, null, undefined, "french"]) {
+    expect(host.normalizeKeyboardLayoutHint(bad) === H.None, "unknown hint " + String(bad) + " rejected to None");
+  }
+
+  expect(host.detectKeyboardLayoutFromMap(new Map([["KeyQ", "a"], ["KeyW", "z"]])) === H.French, "AZERTY layout map detected as French");
+  expect(host.detectKeyboardLayoutFromMap(new Map([["KeyQ", "A"], ["KeyW", "Z"]])) === H.French, "uppercase AZERTY map detected as French");
+  expect(host.detectKeyboardLayoutFromMap(new Map([["KeyQ", "q"], ["KeyW", "w"]])) === H.United_States, "QWERTY layout map detected as US");
+  expect(host.detectKeyboardLayoutFromMap(new Map([["KeyQ", "q"], ["KeyW", "x"]])) === H.None, "unrecognized layout map gives None");
+  expect(host.detectKeyboardLayoutFromMap(null) === H.None, "null layout map gives None");
+
+  expect(host.detectKeyboardLayoutFromLanguages(["fr-FR", "en-US"]) === H.French, "fr-FR primary locale gives French");
+  expect(host.detectKeyboardLayoutFromLanguages(["fr-BE"]) === H.French, "fr-BE primary locale gives French");
+  expect(host.detectKeyboardLayoutFromLanguages(["fr"]) === H.French, "bare fr primary locale gives French");
+  expect(host.detectKeyboardLayoutFromLanguages(["fr-CH"]) === H.None, "Swiss French (QWERTZ) does not force AZERTY");
+  expect(host.detectKeyboardLayoutFromLanguages(["fr-CA"]) === H.None, "Canadian French (QWERTY) does not force AZERTY");
+  expect(host.detectKeyboardLayoutFromLanguages(["en-US", "fr-FR"]) === H.None, "English primary locale with French secondary does not force AZERTY");
+
+  expect(host.detectKeyboardLayoutFromKeyEvent({ code: "KeyQ", key: "a" }) === H.French, "KeyQ -> a detects French AZERTY");
+  expect(host.detectKeyboardLayoutFromKeyEvent({ code: "KeyW", key: "Z" }) === H.French, "KeyW -> Z detects French AZERTY");
+  expect(host.detectKeyboardLayoutFromKeyEvent({ code: "Semicolon", key: "m" }) === H.French, "Semicolon -> m detects French AZERTY");
+  expect(host.detectKeyboardLayoutFromKeyEvent({ code: "KeyQ", key: "q" }) === H.United_States, "KeyQ -> q detects US QWERTY");
+  expect(host.detectKeyboardLayoutFromKeyEvent({ code: "KeyQ", key: "a", ctrlKey: true }) === H.None, "Ctrl+KeyQ shortcut ignored");
+  expect(host.detectKeyboardLayoutFromKeyEvent({ code: "KeyE", key: "e" }) === H.None, "shared KeyE -> e gives None");
+
+  const layout = host.physicalLayout({ kernelBytes: 65536, bootImageSize: 4096, framebufferWidth: 1000, framebufferHeight: 640, memoryBytes: 64 * 1024 * 1024 });
+  const memory = { buffer: new ArrayBuffer(layout.total) };
+  host.writeBootRecord(memory, layout, {
+    bootImageSize: 4096,
+    framebufferWidth: 1000,
+    framebufferHeight: 640,
+    startNanoseconds: 0n,
+    keyboardLayoutHint: H.French,
+  });
+  const view = new DataView(memory.buffer);
+  const base = layout.framebufferResizeControl;
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.keyboard_layout_hint, true) === H.French, "boot record writes initial French keyboard hint");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.keyboard_layout_seq, true) === 1, "boot record sets keyboard_layout_seq to 1 for non-None hint");
+
+  const machine = new host.BrowserMachine({
+    kernelModule: null,
+    framebufferWidth: 1000,
+    framebufferHeight: 640,
+    keyboardLayoutHint: H.French,
+    clockNanoseconds: () => 0n,
+    idleWait: () => {},
+  });
+  machine.memory = memory;
+  machine.layout = layout;
+  expect(!machine.setKeyboardLayoutHint(H.French), "duplicate French hint is a no-op");
+  expect(!machine.setKeyboardLayoutHint(H.None), "None hint is refused");
+  expect(!machine.setKeyboardLayoutHint(99), "out-of-range hint is refused");
+  machine.keyboard.queue = [];
+  expect(machine.setKeyboardLayoutHint(H.United_States), "switching hint to US succeeds");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.keyboard_layout_hint, true) === H.United_States, "runtime US hint written to control page");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.keyboard_layout_seq, true) === 2, "keyboard_layout_seq incremented to 2");
+  expect(machine.keyboard.queue.length >= 3, "runtime layout hint wakes compositor via PS/2");
+}
+
 if (failures.length) {
   for (const failure of failures) console.log("failed: " + failure);
   process.exit(1);

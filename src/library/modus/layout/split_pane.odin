@@ -1,6 +1,6 @@
 // The split pane and the table columns: the places of the parts of a box
 // that the principal resizes with a divider (src/md/features/box_layout.md,
-// "The split pane and the table columns").
+// "The chosen form").
 package layout
 
 // The split ratio, in parts of 10 000, is never under SPLIT_RATIO_LEAST or

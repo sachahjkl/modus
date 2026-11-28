@@ -553,14 +553,18 @@ the_answer_to_a_start_of_settings :: proc(t: ^testing.T) {
 			testing.expectf(t, start_answer(asked, true, running_pass) != .Start, "%v while %v runs starts a second process", asked, running_pass)
 		}
 	}
-	for running_pass in ([?]Pass{.Boot, .Appearance_Next}) {
+	for running_pass in ([?]Pass{.Boot, .Appearance_Next, .Keyboard_Layout_US, .Keyboard_Layout_French}) {
 		testing.expect_value(t, start_answer(.Window, true, running_pass), Start_Answer.Wait_For_Pass)
 		testing.expect_value(t, start_answer(.Boot, true, running_pass), Start_Answer.Refuse)
 		testing.expect_value(t, start_answer(.Appearance_Next, true, running_pass), Start_Answer.Refuse)
+		testing.expect_value(t, start_answer(.Keyboard_Layout_US, true, running_pass), Start_Answer.Refuse)
+		testing.expect_value(t, start_answer(.Keyboard_Layout_French, true, running_pass), Start_Answer.Refuse)
 	}
 	testing.expect_value(t, start_answer(.Window, true, .Window), Start_Answer.Raise_Window)
 	testing.expect_value(t, start_answer(.Appearance_Next, true, .Window), Start_Answer.Raise_Window_At_Appearance)
 	testing.expect_value(t, start_answer(.Boot, true, .Window), Start_Answer.Refuse)
+	testing.expect_value(t, start_answer(.Keyboard_Layout_US, true, .Window), Start_Answer.Refuse)
+	testing.expect_value(t, start_answer(.Keyboard_Layout_French, true, .Window), Start_Answer.Refuse)
 	for asked in Pass {
 		for running_pass in Pass {
 			testing.expect_value(t, start_answer(asked, false, running_pass), Start_Answer.Start)

@@ -11,6 +11,7 @@ import "modus:contract/desktop_shell"
 import "modus:contract/notifications"
 import "modus:contract/ring"
 import "modus:contract/screen_reader"
+import "modus:contract/settings"
 import "modus:system"
 import "modus:display"
 import "modus:graphics"
@@ -120,7 +121,9 @@ desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 	}
 	_ = desktop_layout.workspace_manager_init(&desktop_workspaces)
 	notifications.queue_init(&desktop_notifications)
-	_ = screen_reader.magnifier_init(&desktop_magnifier, screen_w, screen_h, u16(display_choices_in_force.magnifier_eighths))
+	mag_w := i32(frame.width > 0 ? frame.width : int(screen_w))
+	mag_h := i32(frame.height > 0 ? frame.height : int(screen_h))
+	_ = screen_reader.magnifier_init(&desktop_magnifier, mag_w, mag_h, u16(display_choices_in_force.magnifier_eighths))
 	desktop_magnifier.enabled = false
 	desktop_bar_position = display_choices_in_force.bar_edge
 	desktop_notifications.do_not_disturb = display_choices_in_force.do_not_disturb == .On
@@ -128,6 +131,22 @@ desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 	desktop_shell.tray_set(&desktop_tray, .Locale, true, false, "EN")
 	desktop_context_menu = {}
 	desktop_features_ready = true
+}
+
+// desktop_locale_tray_sync keeps the bar locale badge aligned with the active
+// keyboard layout setting.
+desktop_locale_tray_sync :: proc "contextless" (layout: settings.Keyboard_Layout) {
+	if !desktop_features_ready {
+		return
+	}
+	label: string
+	switch layout {
+	case .United_States:
+		label = "EN"
+	case .French:
+		label = "FR"
+	}
+	desktop_shell.tray_set(&desktop_tray, .Locale, true, false, label)
 }
 
 desktop_notifications_reset :: proc "contextless" () {
@@ -145,8 +164,11 @@ desktop_features_resize :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 		screen_height = screen_h,
 		bar_height    = bar_h,
 	}
-	desktop_magnifier.screen_w = screen_w
-	desktop_magnifier.screen_h = screen_h
+	desktop_magnifier.screen_w = i32(frame.width > 0 ? frame.width : int(screen_w))
+	desktop_magnifier.screen_h = i32(frame.height > 0 ? frame.height : int(screen_h))
+	if desktop_magnifier.enabled {
+		desktop_magnifier_focus_logical(pointer_x, pointer_y)
+	}
 }
 
 desktop_window_opened :: proc "contextless" (index: int) {
@@ -1099,7 +1121,7 @@ desktop_magnifier_set :: proc "contextless" (zoom_eighths: u16, tx, ty: i32) -> 
 	}
 	desktop_magnifier.zoom_eighths = zoom_eighths
 	desktop_magnifier.enabled = true
-	screen_reader.magnifier_focus_on(&desktop_magnifier, tx, ty)
+	desktop_magnifier_focus_logical(int(tx), int(ty))
 	damage_whole_screen()
 	return true
 }
@@ -1111,8 +1133,42 @@ desktop_magnifier_toggle :: proc "contextless" (tx, ty: i32) {
 	assistive_magnifying = false
 	desktop_magnifier.enabled = !desktop_magnifier.enabled
 	if desktop_magnifier.enabled {
-		screen_reader.magnifier_focus_on(&desktop_magnifier, tx, ty)
+		desktop_magnifier_focus_logical(int(tx), int(ty))
 	}
+	damage_whole_screen()
+}
+
+// desktop_magnifier_focus_logical maps a logical pointer coordinate into
+// physical framebuffer pixels and pans the magnified viewport proportionally
+// so the magnified pixel under the cursor always matches the pointer across
+// the entire screen, including corners and the bar.
+desktop_magnifier_focus_logical :: proc "contextless" (lx, ly: int) {
+	if !desktop_magnifier.enabled || frame.width <= 0 || frame.height <= 0 {
+		return
+	}
+	desktop_magnifier.screen_w = i32(frame.width)
+	desktop_magnifier.screen_h = i32(frame.height)
+	zoom := max(i32(12), i32(desktop_magnifier.zoom_eighths))
+	view_w := (desktop_magnifier.screen_w * 8) / zoom
+	view_h := (desktop_magnifier.screen_h * 8) / zoom
+	max_x := max(i32(0), desktop_magnifier.screen_w - view_w)
+	max_y := max(i32(0), desktop_magnifier.screen_h - view_h)
+	px := clamp(i32(screen_pixel_of(lx)), 0, max(i32(0), desktop_magnifier.screen_w - 1))
+	py := clamp(i32(screen_pixel_of(ly)), 0, max(i32(0), desktop_magnifier.screen_h - 1))
+	desktop_magnifier.view_x = clamp((px * max_x) / max(i32(1), desktop_magnifier.screen_w - 1), 0, max_x)
+	desktop_magnifier.view_y = clamp((py * max_y) / max(i32(1), desktop_magnifier.screen_h - 1), 0, max_y)
+}
+
+desktop_magnifier_zoom_step :: proc "contextless" (delta_eighths: i32) {
+	if !desktop_features_ready || !desktop_magnifier.enabled {
+		return
+	}
+	next := clamp(i32(desktop_magnifier.zoom_eighths) + delta_eighths, 12, 64)
+	if u16(next) == desktop_magnifier.zoom_eighths {
+		return
+	}
+	desktop_magnifier.zoom_eighths = u16(next)
+	desktop_magnifier_focus_logical(pointer_x, pointer_y)
 	damage_whole_screen()
 }
 
@@ -1121,10 +1177,111 @@ desktop_magnifier_track :: proc "contextless" (tx, ty: i32) {
 		return
 	}
 	before_x, before_y := desktop_magnifier.view_x, desktop_magnifier.view_y
-	screen_reader.magnifier_focus_on(&desktop_magnifier, tx, ty)
+	desktop_magnifier_focus_logical(int(tx), int(ty))
 	if desktop_magnifier.view_x != before_x || desktop_magnifier.view_y != before_y {
 		damage_whole_screen()
 	}
+}
+
+MAGNIFIER_BAR_WIDTH :: 236
+MAGNIFIER_BAR_HEIGHT :: 30
+MAGNIFIER_BAR_MARGIN :: 8
+MAGNIFIER_BUTTON_GAP :: 6
+MAGNIFIER_STEP_BUTTON_WIDTH :: 24
+MAGNIFIER_OFF_BUTTON_WIDTH :: 44
+MAGNIFIER_BUTTON_HEIGHT :: 22
+
+// desktop_magnifier_bar_layout gives the logical rectangles of the floating
+// magnifier control bar and its zoom-out, zoom-in, and off buttons.
+desktop_magnifier_bar_layout :: proc "contextless" () -> (bar_rect, minus_rect, plus_rect, off_rect: Rectangle) {
+	bx := max(MAGNIFIER_BAR_MARGIN, (desktop_width - MAGNIFIER_BAR_WIDTH) / 2)
+	by := desktop_work_top() + MAGNIFIER_BAR_MARGIN
+	bar_rect = {bx, by, bx + MAGNIFIER_BAR_WIDTH, by + MAGNIFIER_BAR_HEIGHT}
+	btn_y := by + (MAGNIFIER_BAR_HEIGHT - MAGNIFIER_BUTTON_HEIGHT) / 2
+	off_x := bar_rect.right - MAGNIFIER_BAR_MARGIN - MAGNIFIER_OFF_BUTTON_WIDTH
+	plus_x := off_x - MAGNIFIER_BUTTON_GAP - MAGNIFIER_STEP_BUTTON_WIDTH
+	minus_x := plus_x - MAGNIFIER_BUTTON_GAP - MAGNIFIER_STEP_BUTTON_WIDTH
+	minus_rect = {minus_x, btn_y, minus_x + MAGNIFIER_STEP_BUTTON_WIDTH, btn_y + MAGNIFIER_BUTTON_HEIGHT}
+	plus_rect = {plus_x, btn_y, plus_x + MAGNIFIER_STEP_BUTTON_WIDTH, btn_y + MAGNIFIER_BUTTON_HEIGHT}
+	off_rect = {off_x, btn_y, off_x + MAGNIFIER_OFF_BUTTON_WIDTH, btn_y + MAGNIFIER_BUTTON_HEIGHT}
+	return
+}
+
+// desktop_magnifier_bar_records draws the compact magnifier control bar at the
+// top-center of the work area whenever magnification is active.
+desktop_magnifier_bar_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	if !desktop_features_ready || !desktop_magnifier.enabled {
+		return
+	}
+	bar_rect, minus_rect, plus_rect, off_rect := desktop_magnifier_bar_layout()
+	bw := bar_rect.right - bar_rect.left
+	bh := bar_rect.bottom - bar_rect.top
+	interface.draw_vertical_gradient(table, bar_rect.left, bar_rect.top, bw, bh, graphics.colors.card_top, graphics.colors.card_bottom)
+	interface.draw_outline(table, bar_rect.left, bar_rect.top, bw, bh, 1, graphics.colors.title)
+	interface.draw_rectangle(table, bar_rect.left + 1, bar_rect.top + 1, bw - 2, 1, graphics.shade(graphics.colors.card_top, 125))
+
+	// Format zoom factor in eighths ("Magnifier 2x" or "Magnifier 1.5x").
+	label_buf: [24]u8
+	w := system.Writer{buffer = label_buf[:]}
+	system.write_part(&w, "Magnifier ")
+	eighths := u64(max(u16(12), desktop_magnifier.zoom_eighths))
+	system.write_unsigned(&w, eighths / 8)
+	rem := eighths % 8
+	if rem != 0 {
+		system.write_part(&w, ".")
+		// Eighths fractional tenths: 4->5, 2->25, 6->75, 1->12, 3->37, 5->62, 7->87.
+		frac := (rem * 100) / 8
+		if frac % 10 == 0 {
+			system.write_unsigned(&w, frac / 10)
+		} else {
+			system.write_unsigned(&w, frac)
+		}
+	}
+	system.write_part(&w, "x")
+	text_y := bar_rect.top + (bh - graphics.CELL_HEIGHT) / 2
+	interface.draw_text(table, bar_rect.left + 10, text_y, system.written(&w), graphics.colors.text_strong, interface.FONT_INTERFACE)
+
+	draw_btn :: proc "contextless" (table: ^interface.Draw_Table, r: Rectangle, label: string, accent: bool) {
+		rw := r.right - r.left
+		rh := r.bottom - r.top
+		hovered := pointer_x >= r.left && pointer_x < r.right && pointer_y >= r.top && pointer_y < r.bottom
+		bg := accent ? graphics.colors.title : (hovered ? graphics.colors.card_top : graphics.colors.background)
+		fg := accent ? graphics.COLOR_WHITE : graphics.colors.text_strong
+		border := accent ? graphics.colors.title : graphics.colors.track
+		interface.draw_rectangle(table, r.left, r.top, rw, rh, bg)
+		interface.draw_outline(table, r.left, r.top, rw, rh, 1, border)
+		tw := interface.text_measured_width(table, interface.FONT_INTERFACE, label)
+		tx := r.left + max(2, (rw - tw) / 2)
+		ty := r.top + (rh - graphics.CELL_HEIGHT) / 2
+		interface.draw_text(table, tx, ty, label, fg, interface.FONT_INTERFACE)
+	}
+	draw_btn(table, minus_rect, "-", false)
+	draw_btn(table, plus_rect, "+", false)
+	draw_btn(table, off_rect, "Off", true)
+}
+
+// desktop_magnifier_bar_press handles left-clicks on the active magnifier bar.
+desktop_magnifier_bar_press :: proc "contextless" (px, py: int) -> bool {
+	if !desktop_features_ready || !desktop_magnifier.enabled {
+		return false
+	}
+	bar_rect, minus_rect, plus_rect, off_rect := desktop_magnifier_bar_layout()
+	if px < bar_rect.left || px >= bar_rect.right || py < bar_rect.top || py >= bar_rect.bottom {
+		return false
+	}
+	if px >= minus_rect.left && px < minus_rect.right && py >= minus_rect.top && py < minus_rect.bottom {
+		desktop_magnifier_zoom_step(-4)
+		return true
+	}
+	if px >= plus_rect.left && px < plus_rect.right && py >= plus_rect.top && py < plus_rect.bottom {
+		desktop_magnifier_zoom_step(4)
+		return true
+	}
+	if px >= off_rect.left && px < off_rect.right && py >= off_rect.top && py < off_rect.bottom {
+		desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))
+		return true
+	}
+	return true
 }
 
 desktop_shortcut_key :: proc "contextless" (code: u32, character: rune, pressed: bool, modifiers: u32) -> bool {
@@ -1155,6 +1312,21 @@ desktop_shortcut_key :: proc "contextless" (code: u32, character: rune, pressed:
 	case 'm', 'M':
 		desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))
 		return true
+	case '+', '=':
+		if desktop_magnifier.enabled {
+			desktop_magnifier_zoom_step(4)
+			return true
+		}
+	case '-', '_':
+		if desktop_magnifier.enabled {
+			desktop_magnifier_zoom_step(-4)
+			return true
+		}
+	case '0', ')':
+		if desktop_magnifier.enabled {
+			desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))
+			return true
+		}
 	}
 	return false
 }

@@ -208,6 +208,17 @@ browser_machine_host_writes_the_boot_record_of_the_kernel :: proc(t: ^testing.T)
 	for check in info.File_Check {
 		testing.expectf(t, file_checks[reflect.enum_string(check)] == int(check), "FileCheck.%v is %d in the host", check, file_checks[reflect.enum_string(check)])
 	}
+	layout_hints := host_object_numbers(t, "BrowserKeyboardLayoutHint")
+	testing.expect_value(t, len(layout_hints), len(info.Browser_Keyboard_Layout_Hint))
+	for hint in info.Browser_Keyboard_Layout_Hint {
+		testing.expectf(t, layout_hints[reflect.enum_string(hint)] == int(hint), "BrowserKeyboardLayoutHint.%v is %d in the host", hint, layout_hints[reflect.enum_string(hint)])
+		parsed, ok := info.browser_keyboard_layout_hint_of_word(u32(hint))
+		testing.expect(t, ok && parsed == hint)
+	}
+	for refused_hint in ([?]u32{3, 4, 255, max(u32)}) {
+		_, ok := info.browser_keyboard_layout_hint_of_word(refused_hint)
+		testing.expectf(t, !ok, "unknown keyboard layout hint word %d was accepted", refused_hint)
+	}
 	text := browser_machine_host_text()
 	testing.expect(t, strings.contains(text, strings.concatenate({"export const BOOT_INFO_SIZE = ", strconv.write_int(make([]u8, 24, context.temp_allocator), i64(size_of(info.Boot_Info)), 10), ";"}, context.temp_allocator)))
 	testing.expect(t, strings.contains(text, strings.concatenate({"export const MEMORY_RANGE_SIZE = ", strconv.write_int(make([]u8, 24, context.temp_allocator), i64(size_of(info.Memory_Range)), 10), ";"}, context.temp_allocator)))

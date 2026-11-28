@@ -1,5 +1,7 @@
 package boot_info
 
+import "modus:contract/enum_word"
+
 // Browser machine live viewport resize control page (src/md/features/browser_machine.md).
 //
 // Placed in one trailing 4 KiB page right after BROWSER_RESIZE_MAX_BYTES of the
@@ -20,26 +22,43 @@ BROWSER_RESIZE_TOTAL_PAGES :: BROWSER_RESIZE_MAX_PAGES + 1
 // browser viewport resize control page.
 BROWSER_RESIZE_MAGIC :: u64(0x3153_4552_5644_4F4D)
 
-Browser_Resize_Page :: struct {
-	magic:          u64, // 0:  BROWSER_RESIZE_MAGIC ("MODVRES1").
-	max_width:      u32, // 8:  Maximum pixel width backed by the framebuffer.
-	max_height:     u32, // 12: Maximum pixel height backed by the framebuffer.
-	req_width:      u32, // 16: Requested viewport width from the browser host.
-	req_height:     u32, // 20: Requested viewport height from the browser host.
-	req_seq:        u32, // 24: Monotonic sequence incremented by the browser host.
-	ack_width:      u32, // 28: Active compositor width after full redraw.
-	ack_height:     u32, // 32: Active compositor height after full redraw.
-	ack_seq:        u32, // 36: Sequence written with .Release after screen.pixels is painted.
-	frame_seq:      u32, // 40: Monotonic frame counter written with .Release after every draw().
-	dirty_x:        u32, // 44: Left X of the bounding box painted in this frame.
-	dirty_y:        u32, // 48: Top Y of the bounding box painted in this frame.
-	dirty_w:        u32, // 52: Width of the bounding box painted in this frame.
-	dirty_h:        u32, // 56: Height of the bounding box painted in this frame.
-	desktop_width:  u32, // 60: Active compositor logical desktop width (for 1:1 pointer mapping).
-	desktop_height: u32, // 64: Active compositor logical desktop height (for 1:1 pointer mapping).
+// Closed set of keyboard layout hints published by the browser host in
+// Browser_Resize_Page. Values cross the shared control page, so they are
+// explicit; browser_keyboard_layout_hint_of_word is their single border.
+Browser_Keyboard_Layout_Hint :: enum u32 {
+	None          = 0,
+	United_States = 1,
+	French        = 2,
 }
 
-#assert(size_of(Browser_Resize_Page) == 72)
+// browser_keyboard_layout_hint_of_word converts the raw word from the browser
+// control page into its enum member and refuses unknown values.
+browser_keyboard_layout_hint_of_word :: proc "contextless" (word: u32) -> (hint: Browser_Keyboard_Layout_Hint, ok: bool) {
+	return enum_word.member_of_word(Browser_Keyboard_Layout_Hint, u64(word))
+}
+
+Browser_Resize_Page :: struct {
+	magic:                u64, // 0:  BROWSER_RESIZE_MAGIC ("MODVRES1").
+	max_width:            u32, // 8:  Maximum pixel width backed by the framebuffer.
+	max_height:           u32, // 12: Maximum pixel height backed by the framebuffer.
+	req_width:            u32, // 16: Requested viewport width from the browser host.
+	req_height:           u32, // 20: Requested viewport height from the browser host.
+	req_seq:              u32, // 24: Monotonic sequence incremented by the browser host.
+	ack_width:            u32, // 28: Active compositor width after full redraw.
+	ack_height:           u32, // 32: Active compositor height after full redraw.
+	ack_seq:              u32, // 36: Sequence written with .Release after screen.pixels is painted.
+	frame_seq:            u32, // 40: Monotonic frame counter written with .Release after every draw().
+	dirty_x:              u32, // 44: Left X of the bounding box painted in this frame.
+	dirty_y:              u32, // 48: Top Y of the bounding box painted in this frame.
+	dirty_w:              u32, // 52: Width of the bounding box painted in this frame.
+	dirty_h:              u32, // 56: Height of the bounding box painted in this frame.
+	desktop_width:        u32, // 60: Active compositor logical desktop width (for 1:1 pointer mapping).
+	desktop_height:       u32, // 64: Active compositor logical desktop height (for 1:1 pointer mapping).
+	keyboard_layout_hint: u32, // 68: Browser_Keyboard_Layout_Hint word written by the browser host.
+	keyboard_layout_seq:  u32, // 72: Monotonic sequence written with .Release when keyboard_layout_hint updates.
+}
+
+#assert(size_of(Browser_Resize_Page) == 80)
 #assert(offset_of(Browser_Resize_Page, magic) == 0)
 #assert(offset_of(Browser_Resize_Page, max_width) == 8)
 #assert(offset_of(Browser_Resize_Page, max_height) == 12)
@@ -56,3 +75,5 @@ Browser_Resize_Page :: struct {
 #assert(offset_of(Browser_Resize_Page, dirty_h) == 56)
 #assert(offset_of(Browser_Resize_Page, desktop_width) == 60)
 #assert(offset_of(Browser_Resize_Page, desktop_height) == 64)
+#assert(offset_of(Browser_Resize_Page, keyboard_layout_hint) == 68)
+#assert(offset_of(Browser_Resize_Page, keyboard_layout_seq) == 72)

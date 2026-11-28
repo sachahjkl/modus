@@ -924,6 +924,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		pointer_theme_choose(first_choice.pointer_theme)
 		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
+		desktop_locale_tray_sync(first_choice.keyboard_layout)
 		// The first presentation record of each window: a compositor that
 		// starts after the boot pass names the settings in force.
 		presentation_told = settings.presentation_words_of(first_choice)
@@ -1017,7 +1018,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wide_grant_mark_take(record.values)
 			case .Session_Reset:
 				session_reset()
-			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release, .Wide_Grant_Screen_Answer, .Wide_Grant_Revoke_Pressed:
+			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release, .Wide_Grant_Screen_Answer, .Wide_Grant_Revoke_Pressed, .Keyboard_Layout_Set:
 				// The border refused None above. The others go from the
 				// compositor to the root service, never to the compositor.
 				system.log_fact(.Info, Control_Command_Not_Taken{word = u64(record.kind)})
@@ -1332,6 +1333,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		pointer_drawn_valid = false
 		pointer_update(0)
 	}
+	desktop_locale_tray_sync(choice.keyboard_layout)
 	bar_layout_update()
 	pointer_theme_choose(choice.pointer_theme) // pointer_picture.odin
 	pointer_form_choose(pointer_form_in_force(choice))
@@ -1864,6 +1866,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		title_double_press = {}
 		keyboard_pointer_pressed() // keyboard_desktop.odin
 		if capture_popover_press(pointer_x, pointer_y) {
+			return
+		}
+		if desktop_magnifier_bar_press(pointer_x, pointer_y) {
 			return
 		}
 		if tray_widgets_press(pointer_x, pointer_y) { // tray_widgets.odin
@@ -2739,6 +2744,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		start_menu_records(table) // start_menu.odin
 	}
 	capture_popover_records(&card_frame)
+	desktop_magnifier_bar_records(table)
 	desktop_notifications_records(table)
 	tray_card_records(table) // tray_widgets.odin: over the banners, which it lists.
 	powerbox_dialog_records(table)

@@ -701,6 +701,11 @@ Control :: enum u32 {
 	// connected to this display holder. Clear all session-scoped compositor
 	// state (clipboard, notifications, palette query and recents, open menus).
 	Session_Reset             = 16,
+	// compositor to root: a host keyboard layout hint arrived (for example from
+	// the browser machine control page). values[0]: a settings.Keyboard_Layout
+	// word; values[1..6] must be 0. The root service runs a one-shot settings
+	// pass so settings stays the single writer of the settings page.
+	Keyboard_Layout_Set       = 17,
 }
 
 // Where the focus goes in the window that Settings_Raise raises. The values

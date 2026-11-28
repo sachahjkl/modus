@@ -13,6 +13,9 @@ const VIEWPORT_MIN_HEIGHT = 400;
 const VIEWPORT_MAX_WIDTH = 1920;
 const VIEWPORT_MAX_HEIGHT = 1200;
 const RESIZE_DEBOUNCE_MS = 120;
+const KEYBOARD_LAYOUT_HINT_NONE = 0;
+const KEYBOARD_LAYOUT_HINT_US = 1;
+const KEYBOARD_LAYOUT_HINT_FRENCH = 2;
 
 const stageFrame = document.getElementById("stage-frame");
 const screen = document.getElementById("screen");
@@ -44,6 +47,70 @@ let lastRequestedHeight = screen.height;
 let lastSeenStageWidth = screen.width;
 let lastSeenStageHeight = screen.height;
 let resizeTimer = 0;
+
+function detectKeyboardLayoutFromLanguages() {
+  const langs = Array.isArray(navigator.languages) && navigator.languages.length
+    ? navigator.languages
+    : (navigator.language ? [navigator.language] : []);
+  for (const raw of langs) {
+    if (typeof raw !== "string") continue;
+    const tag = raw.trim().toLowerCase().replace(/_/g, "-");
+    if (!tag) continue;
+    if (tag === "fr" || tag === "fr-fr" || tag === "fr-be" || tag.startsWith("fr-fr-") || tag.startsWith("fr-be-")) {
+      return KEYBOARD_LAYOUT_HINT_FRENCH;
+    }
+    break;
+  }
+  return KEYBOARD_LAYOUT_HINT_NONE;
+}
+
+function detectKeyboardLayoutFromMap(layoutMap) {
+  if (!layoutMap || typeof layoutMap.get !== "function") return KEYBOARD_LAYOUT_HINT_NONE;
+  const q = String(layoutMap.get("KeyQ") || "").toLowerCase();
+  const w = String(layoutMap.get("KeyW") || "").toLowerCase();
+  if (q === "a" && w === "z") return KEYBOARD_LAYOUT_HINT_FRENCH;
+  if (q === "q" && w === "w") return KEYBOARD_LAYOUT_HINT_US;
+  return KEYBOARD_LAYOUT_HINT_NONE;
+}
+
+function detectKeyboardLayoutFromKeyEvent(event) {
+  if (!event || event.ctrlKey || event.altKey || event.metaKey) return KEYBOARD_LAYOUT_HINT_NONE;
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  switch (event.code) {
+    case "KeyQ": return key === "a" ? KEYBOARD_LAYOUT_HINT_FRENCH : key === "q" ? KEYBOARD_LAYOUT_HINT_US : KEYBOARD_LAYOUT_HINT_NONE;
+    case "KeyW": return key === "z" ? KEYBOARD_LAYOUT_HINT_FRENCH : key === "w" ? KEYBOARD_LAYOUT_HINT_US : KEYBOARD_LAYOUT_HINT_NONE;
+    case "KeyA": return key === "q" ? KEYBOARD_LAYOUT_HINT_FRENCH : key === "a" ? KEYBOARD_LAYOUT_HINT_US : KEYBOARD_LAYOUT_HINT_NONE;
+    case "KeyZ": return key === "w" ? KEYBOARD_LAYOUT_HINT_FRENCH : key === "z" ? KEYBOARD_LAYOUT_HINT_US : KEYBOARD_LAYOUT_HINT_NONE;
+    case "Semicolon": return key === "m" ? KEYBOARD_LAYOUT_HINT_FRENCH : KEYBOARD_LAYOUT_HINT_NONE;
+    default: return KEYBOARD_LAYOUT_HINT_NONE;
+  }
+}
+
+let detectedKeyboardLayoutHint = detectKeyboardLayoutFromLanguages();
+let lastSentKeyboardLayoutHint = KEYBOARD_LAYOUT_HINT_NONE;
+
+function syncKeyboardLayoutHint(hint) {
+  if (hint !== KEYBOARD_LAYOUT_HINT_US && hint !== KEYBOARD_LAYOUT_HINT_FRENCH) return;
+  detectedKeyboardLayoutHint = hint;
+  if (worker && hint !== lastSentKeyboardLayoutHint) {
+    lastSentKeyboardLayoutHint = hint;
+    worker.postMessage({ kind: "keyboard_layout", hint });
+  }
+}
+
+function probeKeyboardLayoutMap() {
+  if (!navigator.keyboard || typeof navigator.keyboard.getLayoutMap !== "function") return;
+  navigator.keyboard.getLayoutMap()
+    .then((map) => {
+      const hint = detectKeyboardLayoutFromMap(map);
+      if (hint !== KEYBOARD_LAYOUT_HINT_NONE) syncKeyboardLayoutHint(hint);
+    })
+    .catch(() => {});
+}
+probeKeyboardLayoutMap();
+if (navigator.keyboard && typeof navigator.keyboard.addEventListener === "function") {
+  navigator.keyboard.addEventListener("layoutchange", probeKeyboardLayoutMap);
+}
 
 function updateScreenMeta(width, height) {
   if (screenMeta) screenMeta.textContent = "boot.image · " + width + " × " + height;
@@ -310,6 +377,7 @@ startButton.addEventListener("click", () => {
     dotSet("stopped");
     status.textContent = "stopped: " + event.message;
   };
+  lastSentKeyboardLayoutHint = detectedKeyboardLayoutHint;
   worker.postMessage({
     kind: "start",
     kernelUrl: "./modulus_kernel.wasm",
@@ -317,6 +385,7 @@ startButton.addEventListener("click", () => {
     memoryMebibytes: 512,
     width: screen.width,
     height: screen.height,
+    keyboardLayoutHint: detectedKeyboardLayoutHint,
   });
   screen.focus();
   requestAnimationFrame(animationFrame);
@@ -355,6 +424,12 @@ for (const kind of ["keydown", "keyup"]) {
   screen.addEventListener(kind, (event) => {
     if (!worker) return;
     event.preventDefault();
+    if (kind === "keydown") {
+      const runtimeHint = detectKeyboardLayoutFromKeyEvent(event);
+      if (runtimeHint !== KEYBOARD_LAYOUT_HINT_NONE && runtimeHint !== lastSentKeyboardLayoutHint) {
+        syncKeyboardLayoutHint(runtimeHint);
+      }
+    }
     worker.postMessage({ kind: "key", code: event.code, pressed: kind === "keydown" });
   });
 }

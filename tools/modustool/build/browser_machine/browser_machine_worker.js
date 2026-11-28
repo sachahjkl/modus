@@ -146,7 +146,7 @@ async function bytesOf(response) {
   return bytes;
 }
 
-async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width = 0, height = 0, cacheBaseUrl = "" }) {
+async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width = 0, height = 0, keyboardLayoutHint = 0, cacheBaseUrl = "" }) {
   const tracker = new BootStageTracker({ desktop: width > 0 && height > 0, onStage: (stage) => postStage(stage) });
   postStage(BootStage.Download);
   const kernelModule = await WebAssembly.compileStreaming(fetch(kernelUrl));
@@ -162,6 +162,7 @@ async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width = 0, heig
     memoryMebibytes,
     framebufferWidth: width,
     framebufferHeight: height,
+    keyboardLayoutHint,
     cacheBaseUrl,
     clockNanoseconds,
     idleWait,
@@ -207,6 +208,12 @@ self.onmessage = (event) => {
     case "resize":
       if (machine) {
         machine.requestResize(message.width, message.height);
+        wakeLoop();
+      }
+      return;
+    case "keyboard_layout":
+      if (machine) {
+        machine.setKeyboardLayoutHint(message.hint);
         wakeLoop();
       }
       return;
