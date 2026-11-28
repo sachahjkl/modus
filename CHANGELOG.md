@@ -6,6 +6,35 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.115.0] - 2026-11-28 00:16
+
+### Added
+
+- **Rich widget micro-interactions across sliders, tabs, and text inputs.** Sliders support mouse-wheel stepping, `Shift` fine stepping, `Page Up`/`Page Down` coarse steps, double-click reset, horizontal drag scrubbing, and click-to-type inline numeric entry; tab bars support mouse-wheel switching and `Home`/`End`; and every single-line `text_input` now supports caret navigation, word jumps (`Ctrl+Left`/`Right`), keyboard and mouse selection, double-click word select, triple-click select all, `Delete`, `Ctrl+Backspace`/`Delete`, `Ctrl+U`, and selection-aware copy/paste.
+- **Live runtime wiring for agent code mode and embedded site guide consoles.** The `assistant` desktop window adds an interactive `Code steps` view with live loop status badges, step filters, execution trace and typed table inspection, trusted-display approval guidance, a right-click menu, and a `Ctrl+K` command palette. Documentation guide pages embed progressive-enhancement inline browser consoles backed lazily by `console.image` and `modulus_kernel.wasm`.
+- **Software processor differential fuzzing and headless browser test part.** Added a native x86-64 differential fuzzer and instruction support probe for `software_machine` (fixing four hardware-semantics bugs in 32-bit `SHLD`/`SHRD` and IEEE-754 SSE flags), full boot-image instruction scanning across `console.image` and `boot.image`, and the `browser_machine` test part driving headless Chromium over a loopback HTTP server and WebSocket CDP client.
+- **Live runtime wiring for device services, Venus GPU, Linux SMP, and `gui_toolkit`.** Wired PCI topology, AMD-Vi IVMD/IRTE checks, and live NVMe 1.4+ controller support into `devices` and `block`; Venus shared-memory ring submission with `Write_Combining` ordering into `gpu_device`; multi-vCPU ACPI MADT and round-robin SMP scheduling into `linux`; fail-closed origin isolation, WebAuthn single-use challenges, and cycle-checked outside-module import graphs into `browser` and `disk_processes`; and single-use hardware-key verification into `unlock`, `recipes`, and `root`.
+- **Live runtime wiring for multi-machine mesh, remote roles, and store sync.** Wired `machine_mesh`, `machine_sync`, `machine_wire`, and `paired_dispatch` into `remote` and `network` with principal-0 authorized mesh exports, non-blocking remote role dispatch with wide-grant auditing and handle-bearing role refusal, directional CPace-derived ChaCha20-Poly1305 NAT relay sealing, and the two-machine QEMU `mesh` test part.
+- **Self-hosted `chibicc` builds of Lua, zstd, and SQLite, plus Tier 2 `hex0` and `catm` seed bootstrap.** `modustool c-self-host --libraries` now compiles upstream Lua 5.4.7, zstd 1.5.7, and SQLite 3.54.1 using Stage 1 `chibicc` and the native modus assembler into validated `.modus` modules (`zstd` matches host clang's compressed-frame BLAKE3 hash and `sqlite` passes `PRAGMA integrity_check`), `c_builder` supports multi-unit C recipes, and `guest_builder` executes the real executable 262-byte x86-64 `hex0` self-host (`blake3(seed) == blake3(stage1)`) and `catm` stages.
+- **Several principals on one machine.** A machine now hosts up to 7 named principals beside principal 0 (`PRINCIPAL_CAPACITY = 8`), each with its own session, encrypted stores, keys, and slot-stable identity across reboots, alongside update-surviving TPM seals (`PolicyAuthorize` + `PolicyNV` + `Owner_Protect`), machine grants (`Principals` and `System`), the `root.machine_acts` audit space, grant-authorized principal removal (`Principal_Remove_By_Grant`), and local cross-principal signed grants.
+
+### Changed
+
+- **Every remaining window migrated onto `modus:layout` and the interface package.** Migrated `pages`, `log`, `server`, and `tables` off `Hand_Picture` onto `interface.Window_Memory`, `modus:layout`, and `modus:interface` draw records, eliminating 2,383 pages of duplicate hand-drawn buffers and unifying damage-by-difference and scaled text rendering across the desktop.
+- **One way to read an object through the storage service.** Migrated `font_outlines` and `script_fonts` delivery off `root`'s fixed address ranges onto `storage.map_object` under the read-only `"fonts"` tree grant (`Publish_Public_Object` for `script_fonts`, `GRANT_VALUE_STORAGE_FONTS_ONLY` short-lived font connections, and `drawing_fonts_set`/`process_fonts_places` for library modules), removing the retired `Pointer_Themes`, `Font_Outlines`, and `Script_Fonts` fixed-range slots (`SLOT_COUNT = 18`).
+
+### Removed
+
+- **Remove `Large_Pages` after Odin fork sync.** `Memory_Flag.Large_Pages` and the legacy contiguous large-page path are removed; large pages of 2 MiB and 1 GiB now come solely from aligned `Frames_Now` runs with zero-allocation demotion, and `Process_Mapping_Flag.Large` reports active 2 MiB or 1 GiB entries.
+
+### Fixed
+
+- **The console line that never ran under a loaded host.** Typed console lines now deliver and execute reliably under load: the compositor drains window key bursts and pending answers without sleeping on concurrent reads, counts every fixed wait word in its wait set, `system.wait_end` wakes waiting ring peers with full memory ordering even on its fast path, the console retires finished lines with Acquire ordering before taking the next key, and serial terminal renderers apply back pressure without dropping keys after Escape.
+- **Collector audit space reload after a wide grant.** The root service now writes wide-grant requests past the principal identifier header in the collector shared region, preventing a startup race that corrupted the stored principal identifier on the first wide grant of a named principal.
+- **Input history recording during CPU-bound work.** Recording a process now ends at the stint bound only when a shared writer has waited one full time slice, rather than ending after a short scheduler slice when no shared writer waits.
+- **Assistant startup race on the storage ring.** The assistant now finishes mapping startup fonts through `display.open` before launching its storage worker thread, preventing a startup deadlock on the shared storage connection.
+- **Opening a window while recorded no longer races the compositor.** `display.open` now waits for the compositor to map the client display ring before mapping it in the client, so a recorded window process never blocks the compositor from opening its ring.
+
 ## [0.114.0] - 2026-11-27 08:27
 
 ### Added
@@ -2148,6 +2177,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.115.0]: https://github.com/sachahjkl/modus/releases/tag/v0.115.0
 [0.114.0]: https://github.com/sachahjkl/modus/releases/tag/v0.114.0
 [0.113.0]: https://github.com/sachahjkl/modus/releases/tag/v0.113.0
 [0.112.0]: https://github.com/sachahjkl/modus/releases/tag/v0.112.0
