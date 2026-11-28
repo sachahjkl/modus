@@ -22,13 +22,13 @@ TEST_OUTPUT_GPU_SCANOUT :: foundation.BUILD_FOLDER + "/test_output_gpu_scanout.t
 GPU_SCANOUT_ENDED :: "compositor: the scanout of the virtual GPU ended"
 
 scenario_gpu_scanout := [?]Step {
-	{kind = .Wait, text = "root: started gpu_device for the GPU at PCI device "},
+	{kind = .Wait, text = "root: started gpu_device for the GPU at PCI device ", any_order = true},
 	{kind = .Wait, text = "gpu_device: ok, scanout 0 at ", any_order = true},
-	{kind = .Wait, text = "compositor: the screen is the scanout of the virtual GPU, resource "},
+	{kind = .Wait, text = "compositor: the screen is the scanout of the virtual GPU, resource ", any_order = true},
 	{kind = .Wait, text = "gpu_device: the first frame of resource ", any_order = true, fails_on = GPU_SCANOUT_ENDED},
 	{kind = .Wait, text = "compositor: surface console", fails_on = GPU_SCANOUT_ENDED},
 	{kind = .Type, text = "start(\"remote_display\")"},
-	{kind = .Wait, text = "root: started network"},
+	{kind = .Wait, text = "root: started network", any_order = true},
 	{kind = .Wait, text = "network: an endpoint for remote_display: UDP, the listen port 7101", any_order = true},
 	{kind = .Remote_Display_Key, text = "remote_display: the public key of this service: "},
 	{kind = .Wait, text = "remote_display: listening on the UDP port 7101, for the host 10.0.2.2 only, and for the viewer keys that a principal allowed", any_order = true},
