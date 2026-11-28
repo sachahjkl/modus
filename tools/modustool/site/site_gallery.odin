@@ -124,6 +124,9 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "assistant_reply.png", group = .Desktop, guide = "docs/ASSISTANT.md", caption = "The assistant runs a read-only call through its grant, shows the table of processes from monitor, and prints its reply."},
 	{file = "assistant_act_dialog.png", group = .Desktop, guide = "docs/ASSISTANT.md", caption = "A write action from the assistant opens the trusted act dialog of the compositor so the principal decides with Allow once or Refuse."},
 	{file = "assistant_refused.png", group = .Desktop, guide = "docs/ASSISTANT.md", caption = "The assistant records a refused action without running it, and refuses a malformed reply at the border before any action runs."},
+	{file = "doom_title.png", group = .Desktop, guide = "docs/DEMONSTRATIONS.md", caption = "Doom running natively as a modus window process on its title screen, drawn through the standard display ring."},
+	{file = "doom_e1m1.png", group = .Desktop, guide = "docs/DEMONSTRATIONS.md", caption = "Doom running natively on modus in E1M1, rendered directly inside a desktop window with zero compatibility layer."},
+	{file = "doom_moved.png", group = .Desktop, guide = "docs/DEMONSTRATIONS.md", caption = "Doom running natively on modus in E1M1 after keyboard movement input advances the live frame."},
 
 	// The console and the terminal.
 	{file = "console.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The console at the start of the machine, with the window of life that one of its lines started."},
@@ -191,6 +194,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "crowd.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "One queue for several writers and several readers, with no lock: the records of one second, against a queue with a lock."},
 	{file = "rings.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "Six processes pass records through six rings."},
 	{file = "rings_stopped.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "A stopped process takes no record: the records wait in the ring."},
+	{file = "linux_guest.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "A Linux guest running inside a modus hardware virtual machine, with its console output shown in a desktop window."},
 
 	// The developer tools.
 	{file = "inspect.png", group = .Developer_Tools, home = true, guide = "docs/TOOLS.md", caption = "A developer tool: the address space of the console as a band scaled by pages, its mappings, its modules and its threads."},
