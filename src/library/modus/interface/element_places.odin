@@ -40,12 +40,20 @@ element_place_name :: proc "contextless" (place: ^Element_Place) -> string {
 // of a frame with a name keeps it: a second one with the same name has no
 // element line.
 element_name :: proc "contextless" (frame: ^Frame, area: Area, name: string) {
-	element_places_add(&frame.element_places, area, name)
+	clipped, visible := draw_table_clip_area(frame.table, area)
+	if !visible {
+		return
+	}
+	element_places_add(&frame.element_places, clipped, name)
 }
 
 // element_name_joined is element_name with a name in two parts, with a
 // space between them: "scroll bar" and "arrow up".
 element_name_joined :: proc "contextless" (frame: ^Frame, area: Area, first, second: string) {
+	clipped, visible := draw_table_clip_area(frame.table, area)
+	if !visible {
+		return
+	}
 	buffer: [ELEMENT_NAME_CAPACITY]u8
 	if len(first) + 1 + len(second) > ELEMENT_NAME_CAPACITY {
 		frame.element_places.dropped += 1
@@ -55,7 +63,80 @@ element_name_joined :: proc "contextless" (frame: ^Frame, area: Area, first, sec
 	buffer[count] = ' '
 	count += 1
 	count += copy(buffer[count:], second)
-	element_places_add(&frame.element_places, area, string(buffer[:count]))
+	element_places_add(&frame.element_places, clipped, string(buffer[:count]))
+}
+
+// element_places_note_scroll marks the current frame as a scroll movement so
+// rapid scrolling coalesces Element_Placed facts until scrolling settles.
+element_places_note_scroll :: proc "contextless" (frame: ^Frame) {
+	frame.scroll_moved = true
+}
+
+// Inline capacity (quiet window): while scroll frames arrive within this
+// interval, Element_Placed facts coalesce into one settled diff instead of
+// emitting every visible element on every scroll frame.
+ELEMENT_PLACES_SCROLL_SETTLE_MILLISECONDS :: u64(150)
+
+// Decision for publishing element places at the end of a presented frame.
+Element_Places_Action :: enum u8 {
+	None,
+	Publish_Now,
+	Defer_Until_Release,
+	Defer_Until_Deadline,
+}
+
+// element_places_equal reports whether two sets name the exact same elements
+// at the exact same rectangles, regardless of insertion order.
+element_places_equal :: proc "contextless" (a, b: ^Element_Places) -> bool {
+	if a.count != b.count {
+		return false
+	}
+	for &place in a.places[:a.count] {
+		if element_place_changed(b, &place) {
+			return false
+		}
+	}
+	return true
+}
+
+// element_places_step_decide chooses whether a presented frame publishes its
+// Element_Placed/Element_Gone facts immediately or coalesces them while
+// scrolling. First frames and discrete non-scroll layout changes always
+// publish immediately.
+element_places_step_decide :: proc "contextless" (
+	published_once: bool,
+	equal_to_written: bool,
+	pending_dirty: bool,
+	equal_to_pending: bool,
+	scrolling: bool,
+	dragging_bar: bool,
+	settle_wired: bool,
+	now_ms: u64,
+	current_deadline_ms: u64,
+) -> (action: Element_Places_Action, deadline_ms: u64) {
+	if equal_to_written {
+		return .None, 0
+	}
+	if !published_once {
+		return .Publish_Now, 0
+	}
+	if dragging_bar {
+		return .Defer_Until_Release, 0
+	}
+	if scrolling && settle_wired {
+		due := now_ms > system.WAIT_FOREVER - ELEMENT_PLACES_SCROLL_SETTLE_MILLISECONDS ? system.WAIT_FOREVER : now_ms + ELEMENT_PLACES_SCROLL_SETTLE_MILLISECONDS
+		return .Defer_Until_Deadline, due
+	}
+	if pending_dirty && equal_to_pending && settle_wired && current_deadline_ms != 0 && now_ms < current_deadline_ms {
+		return .Defer_Until_Deadline, current_deadline_ms
+	}
+	return .Publish_Now, 0
+}
+
+// element_places_deadline_due reports whether a deferred scroll settle batch
+// is due to be flushed at now_ms.
+element_places_deadline_due :: proc "contextless" (pending_dirty: bool, deadline_ms, now_ms: u64) -> bool {
+	return pending_dirty && deadline_ms != 0 && now_ms >= deadline_ms
 }
 
 // element_places_add adds a name and its area to a set, when the set does

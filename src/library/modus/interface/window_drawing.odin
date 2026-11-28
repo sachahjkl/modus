@@ -86,8 +86,14 @@ Window_Drawing :: struct {
 	// frame after it draws whole, whichever loop read the event.
 	surface_serial: u64,
 	// The named elements that the log has from this window: a drawn frame
-	// writes the lines of what differs (element_places_publish).
-	element_places_written: Element_Places,
+	// writes the lines of what differs (element_places_publish), coalescing
+	// rapid scroll frames until release or quiet.
+	element_places_written:        Element_Places,
+	element_places_pending:        Element_Places,
+	element_places_pending_dirty:  bool,
+	element_places_published_once: bool,
+	element_places_settle_wired:   bool,
+	element_places_settle_deadline: u64,
 	element_places_dropped_logged: bool, // The line of a frame with element names that it did not keep is on the log: a window writes it one time.
 	// The appearance of the last frame that the window presented, so that
 	// the first frame of a new appearance writes one line
@@ -128,8 +134,8 @@ appearance_presented_note :: proc "contextless" (drawing: ^Window_Drawing, windo
 }
 
 // element_places_write writes on the log the element places of a frame
-// that the window draws, when they changed: a machine test presses an
-// element by its name from these facts.
+// that the window draws, when they changed, or defers them while rapid
+// scrolling or a scroll bar drag is active.
 @(private = "file")
 element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
 	title := string(window.title[:window.title_count])
@@ -137,7 +143,65 @@ element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Fr
 		drawing.element_places_dropped_logged = true
 		system.log(.Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
 	}
-	element_places_publish(&drawing.element_places_written, &frame.element_places, title)
+	equal_written := element_places_equal(&drawing.element_places_written, &frame.element_places)
+	equal_pending := drawing.element_places_pending_dirty && element_places_equal(&drawing.element_places_pending, &frame.element_places)
+	dragging_bar := drawing.state.scroll_bar_part != .None
+	now := system.time()
+	action, due := element_places_step_decide(
+		drawing.element_places_published_once,
+		equal_written,
+		drawing.element_places_pending_dirty,
+		equal_pending,
+		frame.scroll_moved,
+		dragging_bar,
+		drawing.element_places_settle_wired,
+		now,
+		drawing.element_places_settle_deadline,
+	)
+	switch action {
+	case .None:
+		drawing.element_places_pending_dirty = false
+		drawing.element_places_settle_deadline = 0
+	case .Publish_Now:
+		element_places_publish(&drawing.element_places_written, &frame.element_places, title)
+		drawing.element_places_published_once = true
+		drawing.element_places_pending_dirty = false
+		drawing.element_places_settle_deadline = 0
+	case .Defer_Until_Release:
+		element_places_keep(&drawing.element_places_pending, &frame.element_places)
+		drawing.element_places_pending_dirty = true
+		drawing.element_places_settle_deadline = 0
+	case .Defer_Until_Deadline:
+		element_places_keep(&drawing.element_places_pending, &frame.element_places)
+		drawing.element_places_pending_dirty = true
+		drawing.element_places_settle_deadline = due
+	}
+}
+
+// window_element_places_deadline enables scroll-settle coalescing for this
+// window and merges any pending element-place flush deadline into deadline.
+window_element_places_deadline :: proc "contextless" (drawing: ^Window_Drawing, deadline: u64) -> u64 {
+	drawing.element_places_settle_wired = true
+	if !drawing.element_places_pending_dirty || drawing.element_places_settle_deadline == 0 {
+		return deadline
+	}
+	if deadline == 0 || deadline == system.WAIT_FOREVER || drawing.element_places_settle_deadline < deadline {
+		return drawing.element_places_settle_deadline
+	}
+	return deadline
+}
+
+// window_element_places_flush publishes any deferred element-place changes
+// once the scroll settle deadline has passed.
+window_element_places_flush :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) {
+	if !element_places_deadline_due(drawing.element_places_pending_dirty, drawing.element_places_settle_deadline, system.time()) {
+		return
+	}
+	title := string(window.title[:window.title_count])
+	element_places_publish(&drawing.element_places_written, &drawing.element_places_pending, title)
+	drawing.element_places_published_once = true
+	drawing.element_places_pending_dirty = false
+	drawing.element_places_settle_deadline = 0
 }
 
 // act_names_differ says if the act names of a frame differ from the set

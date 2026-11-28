@@ -850,7 +850,7 @@ run_machine :: proc(args: []string) -> int {
 		if code := build.build_system(build.boot_volumes_of_command("run")); code != 0 {
 			return code
 		}
-		if !machine.disk_prepare(machine.DATA_DISK, build.DATA_DISK_SIZE, false) {
+		if !machine.run_data_disk_prepare(machine.DATA_DISK, build.DATA_DISK_SIZE) {
 			return foundation.EXIT_FAILURE
 		}
 		// The peer receives the calls of `modustool call` on a Unix socket of

@@ -264,6 +264,9 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	first = clamp(first, 0, geometry.range)
 	result.first = first
 	result.changed = first != geometry.first
+	if result.changed {
+		frame.scroll_moved = true
+	}
 	result.under_pointer = inside
 	result.held = held
 

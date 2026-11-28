@@ -3,12 +3,14 @@
 // test (docs/TOOLS.md, "The parts of the machine test").
 package machine
 
+import "core:encoding/endian"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import module "modus:contract/module"
 import "modus:contract/reference_screen"
 import "modus:contract/remote"
+import "modus:contract/store"
 import "modus:contract/timed_stream"
 import "modus:bochs_display"
 import "modus:pci"
@@ -602,6 +604,55 @@ disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
 		return false
 	}
 	return true
+}
+
+// root_blocks_have_older_format says if the magic words of root blocks 0 and 1
+// belong to an earlier storage format ("STORAGE1" to "STORAGE6") with neither
+// block holding the current format. Unrecognized bytes and blank disks give
+// false so an unknown file is never overwritten.
+root_blocks_have_older_format :: proc(block0_head, block1_head: []u8) -> bool {
+	m0, ok0 := endian.get_u64(block0_head, .Little)
+	m1, ok1 := endian.get_u64(block1_head, .Little)
+	if (ok0 && m0 == store.ROOT_MAGIC) || (ok1 && m1 == store.ROOT_MAGIC) {
+		return false
+	}
+	return (ok0 && store.root_magic_older(m0)) || (ok1 && store.root_magic_older(m1))
+}
+
+// data_disk_has_older_format reads the first 8 bytes of root blocks 0 and 1 of
+// an existing disk image and reports whether it uses an older storage format.
+data_disk_has_older_format :: proc(path: string) -> bool {
+	file, open_error := os.open(path, {.Read})
+	if open_error != nil {
+		return false
+	}
+	defer os.close(file)
+	head: [store.BLOCK_SIZE + size_of(u64)]u8
+	total := 0
+	for total < len(head) {
+		count, read_error := os.read(file, head[total:])
+		if count > 0 {
+			total += count
+		}
+		if read_error != nil || count == 0 {
+			break
+		}
+	}
+	block0 := head[:min(total, size_of(u64))]
+	block1 := total > store.BLOCK_SIZE ? head[store.BLOCK_SIZE:total] : nil
+	return root_blocks_have_older_format(block0, block1)
+}
+
+// run_data_disk_prepare prepares the persistent data disk for interactive
+// `modustool run` sessions. Before 1.0, storage refuses disks of earlier
+// formats, so an obsolete local data disk is replaced with a fresh zeroed disk
+// instead of leaving settings and stores unwritable.
+run_data_disk_prepare :: proc(path: string, size: int) -> bool {
+	if os.exists(path) && data_disk_has_older_format(path) {
+		fmt.printfln("modustool: %s uses an older storage format; replacing it with a fresh disk", path)
+		return disk_prepare(path, size, true)
+	}
+	return disk_prepare(path, size, false)
 }
 
 // The disks beside the boot volume (src/library/modus/pci has their places on the

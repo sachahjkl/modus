@@ -93,7 +93,7 @@ run_arguments_parse :: proc(args: []string) -> (options: Run_Command_Options, pr
 // COM1 writes the kernel log to CONSOLE_RUN_LOG and COM2 connects directly to
 // the developer's terminal.
 console_machine_run :: proc() -> bool {
-	if !disk_prepare(DATA_DISK, build.DATA_DISK_SIZE, false) {
+	if !run_data_disk_prepare(DATA_DISK, build.DATA_DISK_SIZE) {
 		return false
 	}
 	peer: Peer

@@ -302,9 +302,13 @@ window_scroll_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame
 			system.log(.Info, "interface: ", title, ": the focus moves the view to ", u64(drawing.scroll_x), ",", u64(drawing.scroll_y))
 		}
 	}
+	start_x, start_y := drawing.scroll_x, drawing.scroll_y
 	drawing.scroll_x = window_scroll_clamp(drawing.scroll_x, view.most_x)
 	drawing.scroll_y = window_scroll_clamp(drawing.scroll_y, view.most_y)
 	if !bars {
+		if drawing.scroll_x != start_x || drawing.scroll_y != start_y {
+			frame.scroll_moved = true
+		}
 		return
 	}
 	// A bar inside a clip of the frame would be cut by it.
@@ -319,6 +323,9 @@ window_scroll_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame
 	if view.scrolls_x {
 		bar := scroll_bar(frame, {0, view.inner_height, view.inner_width, SCROLL_BAR_THICKNESS}, identity("interface: the horizontal scroll bar of the window"), .Horizontal, {total = window.width, visible = view.inner_width, first = drawing.scroll_x}, {line = LINE}, "the window", inner)
 		drawing.scroll_x = window_scroll_clamp(bar.first, view.most_x)
+	}
+	if drawing.scroll_x != start_x || drawing.scroll_y != start_y {
+		frame.scroll_moved = true
 	}
 	if view.scrolls_x && view.scrolls_y {
 		draw_rectangle(frame.table, view.inner_width, view.inner_height, SCROLL_BAR_THICKNESS, SCROLL_BAR_THICKNESS, graphics.colors.background)

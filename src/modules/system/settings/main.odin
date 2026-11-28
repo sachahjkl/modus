@@ -229,6 +229,7 @@ has_store: bool
 window_memory: interface.Window_Memory(2048, 32768)
 table_full_logged: bool
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
+drawn_scroll: int // The view scroll of the last drawn frame.
 
 // with_value gives a choice with one setting at the value of a button or of
 // a name: its place in the names of the values of the setting, whose word
@@ -2273,6 +2274,9 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	tree := &layout_tree
 	footer_area := interface.Area{0, height - STATUS_FOOTER_HEIGHT, width, STATUS_FOOTER_HEIGHT}
 	if laid_out {
+		if boxes.scroll != drawn_scroll {
+			interface.element_places_note_scroll(&frame)
+		}
 		footer_area = area_of(tree, boxes.footer)
 		if boxes.has_sidebar {
 			if sidebar_draw(&frame, area_of(tree, boxes.sidebar), has_modules) {
@@ -2401,6 +2405,9 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	}
 
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
+	if laid_out {
+		drawn_scroll = boxes.scroll
+	}
 	if frame.table.full && !table_full_logged {
 		table_full_logged = true
 		system.log_fact(.Warning, Frame_Table_Full{records = u64(len(window_memory.records_now)), text_bytes = u64(len(window_memory.text_now))})
@@ -2515,8 +2522,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
 		system.wait_word(&wait, &discovered_dirty, discovered_seen)
-		deadline := appearance_edge_step(&wait)
+		deadline := interface.window_element_places_deadline(&window_memory.drawing, appearance_edge_step(&wait))
 		system.wait_end(&wait, deadline)
+		interface.window_element_places_flush(&window_memory.drawing, &window)
 		system.service_run(&service)
 		dirty_now := intrinsics.atomic_load_explicit(&discovered_dirty, .Acquire)
 		discovered_changed := dirty_now != discovered_seen

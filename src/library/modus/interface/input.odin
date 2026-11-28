@@ -305,6 +305,7 @@ Frame :: struct {
 	act_name_count:      int, // The entries of `act_names` in use.
 	act_names_dropped:   int, // The act names that the frame did not keep: too long, empty, or past the capacity.
 	element_places:      Element_Places, // The named elements of this frame, so far (element_name): a window writes their changes on the log.
+	scroll_moved:        bool, // True when scrolling moved the view in this frame; used to coalesce Element_Placed facts.
 	// The area of the element with the focus in this frame: a window that
 	// scrolls brings it into its view (window_scroll.odin).
 	focus_area:          Area,

@@ -126,6 +126,9 @@ Draw_Table :: struct {
 	// The clips of the frame that are pushed and not popped yet: each
 	// record that the table takes keeps room for their pops.
 	clip_depth:                 int,
+	// Intersected rectangle of each open clip, used so element_name omits
+	// widgets clipped completely off-screen and reports visible areas only.
+	clip_stack:                 [draw_record.CLIP_DEPTH_LIMIT]Area,
 	// The pushes that the table did not take (past CLIP_DEPTH_LIMIT, or
 	// with no room) and that are not popped yet: their pops are not
 	// written either, so no pop ends a clip that the table holds.
@@ -185,6 +188,7 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.picture_memories = source.picture_memories
 	target.interface_font = source.interface_font
 	target.clip_depth = source.clip_depth
+	target.clip_stack = source.clip_stack
 	target.clip_pushes_not_written = source.clip_pushes_not_written
 	target.element_depth = source.element_depth
 	target.element_pushes_not_written = source.element_pushes_not_written
@@ -861,11 +865,48 @@ draw_clip_push :: proc "contextless" (table: ^Draw_Table, x, y, width, height: i
 		table.clip_pushes_not_written += 1
 		return
 	}
+	pushed := Area{x, y, max(width, 0), max(height, 0)}
+	if table.clip_depth > 0 {
+		pushed, _ = area_intersect(table.clip_stack[table.clip_depth - 1], pushed)
+	}
 	table.records[table.record_count] = placed_record(draw_record.Draw_Clip_Push{}, 0, x, y, max(width, 0), max(height, 0))
 	table.record_count += 1
+	table.clip_stack[table.clip_depth] = pushed
 	table.clip_depth += 1
 	table.push_stack[table.push_depth] = .Clip
 	table.push_depth += 1
+}
+
+// area_intersect returns the intersection of two areas, or an empty area and
+// false when they do not overlap.
+area_intersect :: proc "contextless" (a, b: Area) -> (result: Area, visible: bool) {
+	if a.width <= 0 || a.height <= 0 || b.width <= 0 || b.height <= 0 {
+		return {}, false
+	}
+	left := max(a.x, b.x)
+	top := max(a.y, b.y)
+	right := min(a.x + a.width, b.x + b.width)
+	bottom := min(a.y + a.height, b.y + b.height)
+	if right <= left || bottom <= top {
+		return {}, false
+	}
+	return {left, top, right - left, bottom - top}, true
+}
+
+// draw_table_clip_area cuts area to the table's active clip rectangle, if any.
+// Returns visible = false when an unwritten clip hides records or when area
+// lies completely outside the active clip.
+draw_table_clip_area :: proc "contextless" (table: ^Draw_Table, area: Area) -> (clipped: Area, visible: bool) {
+	if table == nil {
+		return area, true
+	}
+	if table.clip_pushes_not_written > 0 {
+		return {}, false
+	}
+	if table.clip_depth == 0 {
+		return area, true
+	}
+	return area_intersect(area, table.clip_stack[table.clip_depth - 1])
 }
 
 // draw_clip_pop appends the pop of the last clip open: the records after it
