@@ -107,126 +107,127 @@ button_styled :: proc "contextless" (frame: ^Frame, area: Area, element: Element
 	defer draw_element_pop(frame.table)
 
 	table := frame.table
+	theme := theme_current(frame)
 	el := u32(element)
-	text_color := graphics.colors.text
+	text_color := theme.text
 	font := FONT_INTERFACE
 
 	switch variant {
 	case .Secondary:
 		switch {
 		case disabled:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.recess, el)
-			draw_outline(table, area.x, area.y, area.width, area.height, 1, graphics.colors.track, el)
-			text_color = graphics.colors.dim
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.recess, el)
+			draw_outline(table, area.x, area.y, area.width, area.height, 1, theme.track, el)
+			text_color = theme.text_dim
 		case pressed_down:
-			top := graphics.shade(graphics.colors.chosen, 82)
-			bot := graphics.shade(graphics.colors.chosen, 96)
+			top := graphics.shade(theme.chosen, 82)
+			bot := graphics.shade(theme.chosen, 96)
 			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, top, bot, el)
-			draw_outline(table, area.x, area.y, area.width, area.height, 1, graphics.colors.title, el)
-			text_color = graphics.COLOR_WHITE
+			draw_outline(table, area.x, area.y, area.width, area.height, 1, theme.accent, el)
+			text_color = theme.text_on_chosen
 		case open:
-			top := hovered ? graphics.shade(graphics.colors.chosen, 114) : graphics.shade(graphics.colors.chosen, 106)
-			bot := graphics.shade(graphics.colors.chosen, 88)
+			top := hovered ? graphics.shade(theme.chosen, 114) : graphics.shade(theme.chosen, 106)
+			bot := graphics.shade(theme.chosen, 88)
 			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, top, bot, el)
 			if area.width > 2 {
-				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(graphics.colors.chosen, 138), el)
+				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(theme.chosen, 138), el)
 			}
-			text_color = graphics.COLOR_WHITE
+			text_color = theme.text_on_chosen
 		case hovered:
-			top := graphics.shade(graphics.colors.title, 70)
-			bot := graphics.shade(graphics.colors.title, 54)
+			top := graphics.shade(theme.accent, 70)
+			bot := graphics.shade(theme.accent, 54)
 			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, top, bot, el)
-			draw_outline(table, area.x, area.y, area.width, area.height, 1, graphics.colors.title, el)
-			text_color = graphics.COLOR_WHITE
+			draw_outline(table, area.x, area.y, area.width, area.height, 1, theme.accent, el)
+			text_color = theme.text_on_chosen
 		case:
-			top := graphics.shade(graphics.colors.track, 108)
-			bot := graphics.shade(graphics.colors.track, 92)
+			top := graphics.shade(theme.track, 108)
+			bot := graphics.shade(theme.track, 92)
 			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, top, bot, el)
-			draw_outline(table, area.x, area.y, area.width, area.height, 1, graphics.colors.not_usable, el)
+			draw_outline(table, area.x, area.y, area.width, area.height, 1, theme.border, el)
 			if area.width > 2 && area.height > 2 {
-				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(graphics.colors.track, 122), el)
+				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(theme.track, 122), el)
 			}
-			text_color = graphics.colors.text
+			text_color = theme.text
 		}
 	case .Primary:
 		font = FONT_INTERFACE_BOLD
 		switch {
 		case disabled:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, el)
-			text_color = graphics.colors.dim
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.track, el)
+			text_color = theme.text_dim
 		case pressed_down:
-			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.colors.chosen, 78), graphics.shade(graphics.colors.chosen, 92), el)
-			draw_outline(table, area.x, area.y, area.width, area.height, 1, graphics.colors.title, el)
-			text_color = graphics.COLOR_WHITE
+			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(theme.chosen, 78), graphics.shade(theme.chosen, 92), el)
+			draw_outline(table, area.x, area.y, area.width, area.height, 1, theme.accent, el)
+			text_color = theme.text_on_chosen
 		case hovered:
-			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.colors.chosen, 122), graphics.shade(graphics.colors.chosen, 96), el)
+			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(theme.chosen, 122), graphics.shade(theme.chosen, 96), el)
 			if area.width > 2 {
-				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(graphics.colors.chosen, 148), el)
+				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(theme.chosen, 148), el)
 			}
-			text_color = graphics.COLOR_WHITE
+			text_color = theme.text_on_chosen
 		case:
-			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.colors.chosen, 110), graphics.shade(graphics.colors.chosen, 88), el)
+			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(theme.chosen, 110), graphics.shade(theme.chosen, 88), el)
 			if area.width > 2 {
-				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(graphics.colors.chosen, 138), el)
+				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(theme.chosen, 138), el)
 			}
-			text_color = graphics.COLOR_WHITE
+			text_color = theme.text_on_chosen
 		}
 	case .Ghost:
 		switch {
 		case disabled:
-			text_color = graphics.colors.dim
+			text_color = theme.text_dim
 		case pressed_down:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.chosen, el)
-			text_color = graphics.COLOR_WHITE
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.chosen, el)
+			text_color = theme.text_on_chosen
 		case open:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, el)
-			draw_outline(table, area.x, area.y, area.width, area.height, 1, graphics.colors.title, el)
-			text_color = graphics.colors.text_strong
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.track, el)
+			draw_outline(table, area.x, area.y, area.width, area.height, 1, theme.accent, el)
+			text_color = theme.text_strong
 		case hovered:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, el)
-			text_color = graphics.colors.text_strong
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.track, el)
+			text_color = theme.text_strong
 		case:
-			text_color = graphics.colors.text
+			text_color = theme.text
 		}
 	case .Danger:
 		font = FONT_INTERFACE_BOLD
 		switch {
 		case disabled:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, el)
-			text_color = graphics.colors.dim
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.track, el)
+			text_color = theme.text_dim
 		case pressed_down:
-			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.colors.stop_process, 78), graphics.shade(graphics.colors.stop_process, 92), el)
-			text_color = graphics.COLOR_WHITE
+			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(theme.danger, 78), graphics.shade(theme.danger, 92), el)
+			text_color = theme.text_on_chosen
 		case hovered:
-			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.colors.stop_process_pointer_over, graphics.colors.stop_process, el)
+			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(theme.danger, 118), theme.danger, el)
 			if area.width > 2 {
-				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(graphics.colors.stop_process_pointer_over, 132), el)
+				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(theme.danger, 136), el)
 			}
-			text_color = graphics.COLOR_WHITE
+			text_color = theme.text_on_chosen
 		case:
-			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.colors.stop_process, graphics.shade(graphics.colors.stop_process, 82), el)
+			draw_vertical_gradient(table, area.x, area.y, area.width, area.height, theme.danger, graphics.shade(theme.danger, 82), el)
 			if area.width > 2 {
-				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(graphics.colors.stop_process, 130), el)
+				draw_rectangle(table, area.x + 1, area.y + 1, area.width - 2, 1, graphics.shade(theme.danger, 130), el)
 			}
-			text_color = graphics.COLOR_WHITE
+			text_color = theme.text_on_chosen
 		}
 	case .Sidebar_Row:
 		switch {
 		case disabled:
-			text_color = graphics.colors.dim
+			text_color = theme.text_dim
 		case open:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, el)
-			draw_rectangle(table, area.x, area.y + 3, 3, max(area.height - 6, 2), graphics.colors.title, el)
-			text_color = graphics.colors.text_strong
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.track, el)
+			draw_rectangle(table, area.x, area.y + 3, 3, max(area.height - 6, 2), theme.accent, el)
+			text_color = theme.text_strong
 			font = FONT_INTERFACE_BOLD
 		case pressed_down:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.chosen, el)
-			text_color = graphics.COLOR_WHITE
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.chosen, el)
+			text_color = theme.text_on_chosen
 		case hovered:
-			draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.card_top, el)
-			text_color = graphics.colors.text_strong
+			draw_rectangle(table, area.x, area.y, area.width, area.height, theme.card_top, el)
+			text_color = theme.text_strong
 		case:
-			text_color = graphics.colors.text
+			text_color = theme.text
 		}
 	}
 
@@ -280,8 +281,9 @@ toggle_switch :: proc "contextless" (frame: ^Frame, area: Area, element: Element
 	defer draw_element_pop(frame.table)
 
 	table := frame.table
+	theme := theme_current(frame)
 	if hovered {
-		draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.card_top, el)
+		draw_rectangle(table, area.x, area.y, area.width, area.height, theme.card_top, el)
 	}
 
 	track_x := area.x + area.width - SWITCH_TRACK_WIDTH - 4
@@ -289,7 +291,7 @@ toggle_switch :: proc "contextless" (frame: ^Frame, area: Area, element: Element
 	label_room := max(track_x - area.x - 12, 0)
 	if label != "" && label_room > 0 {
 		shown := text_fit(table, FONT_INTERFACE, label, label_room)
-		draw_text(table, area.x + 4, area.y + (area.height - LINE) / 2, shown, disabled ? graphics.colors.dim : (hovered ? graphics.colors.text_strong : graphics.colors.text), FONT_INTERFACE, el)
+		draw_text(table, area.x + 4, area.y + (area.height - LINE) / 2, shown, disabled ? theme.text_dim : (hovered ? theme.text_strong : theme.text), FONT_INTERFACE, el)
 	}
 
 	if track_x >= area.x {
@@ -297,14 +299,14 @@ toggle_switch :: proc "contextless" (frame: ^Frame, area: Area, element: Element
 		track_border: graphics.Color
 		switch {
 		case disabled:
-			track_bg = graphics.colors.recess
-			track_border = graphics.colors.track
+			track_bg = theme.recess
+			track_border = theme.track
 		case on:
-			track_bg = hovered ? graphics.shade(graphics.colors.chosen, 118) : graphics.colors.chosen
-			track_border = graphics.colors.title
+			track_bg = hovered ? graphics.shade(theme.chosen, 118) : theme.chosen
+			track_border = theme.accent
 		case:
-			track_bg = hovered ? graphics.shade(graphics.colors.track, 118) : graphics.colors.track
-			track_border = hovered ? graphics.colors.title : graphics.colors.not_usable
+			track_bg = hovered ? graphics.shade(theme.track, 118) : theme.track
+			track_border = hovered ? theme.accent : theme.border
 		}
 		draw_rectangle(table, track_x, track_y, SWITCH_TRACK_WIDTH, SWITCH_TRACK_HEIGHT, track_bg, el)
 		draw_outline(table, track_x, track_y, SWITCH_TRACK_WIDTH, SWITCH_TRACK_HEIGHT, 1, track_border, el)
@@ -314,7 +316,7 @@ toggle_switch :: proc "contextless" (frame: ^Frame, area: Area, element: Element
 			thumb_x += on ? -1 : 1
 		}
 		thumb_y := track_y + (SWITCH_TRACK_HEIGHT - SWITCH_THUMB_HEIGHT) / 2
-		thumb_col := disabled ? graphics.colors.not_usable : (on ? graphics.COLOR_WHITE : (hovered ? graphics.colors.text_strong : graphics.colors.text))
+		thumb_col := disabled ? theme.border : (on ? theme.text_on_chosen : (hovered ? theme.text_strong : theme.text))
 		draw_rectangle(table, thumb_x, thumb_y, SWITCH_THUMB_WIDTH, SWITCH_THUMB_HEIGHT, thumb_col, el)
 	}
 
@@ -374,8 +376,9 @@ segmented_control :: proc "contextless" (frame: ^Frame, area: Area, element: Ele
 	defer draw_element_pop(table)
 
 	// Recessed outer container.
-	draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.recess, el)
-	draw_outline(table, area.x, area.y, area.width, area.height, 1, disabled ? graphics.colors.track : graphics.colors.not_usable, el)
+	theme := theme_current(frame)
+	draw_rectangle(table, area.x, area.y, area.width, area.height, theme.recess, el)
+	draw_outline(table, area.x, area.y, area.width, area.height, 1, disabled ? theme.track : theme.border, el)
 
 	inner_x := area.x + 2
 	inner_y := area.y + 2
@@ -403,24 +406,24 @@ segmented_control :: proc "contextless" (frame: ^Frame, area: Area, element: Ele
 			set_size        = u32(count),
 		})
 		if is_selected {
-			bg_top := disabled ? graphics.colors.track : graphics.shade(graphics.colors.chosen, 110)
-			bg_bot := disabled ? graphics.colors.track : graphics.shade(graphics.colors.chosen, 88)
+			bg_top := disabled ? theme.track : graphics.shade(theme.chosen, 110)
+			bg_bot := disabled ? theme.track : graphics.shade(theme.chosen, 88)
 			draw_vertical_gradient(table, sx, inner_y, sw, inner_h, bg_top, bg_bot, opt_id)
 			if !disabled && sw > 2 {
-				draw_rectangle(table, sx + 1, inner_y, sw - 2, 1, graphics.shade(graphics.colors.chosen, 140), opt_id)
+				draw_rectangle(table, sx + 1, inner_y, sw - 2, 1, graphics.shade(theme.chosen, 140), opt_id)
 			}
 		} else if seg_hovered {
-			draw_rectangle(table, sx, inner_y, sw, inner_h, graphics.colors.track, opt_id)
+			draw_rectangle(table, sx, inner_y, sw, inner_h, theme.track, opt_id)
 		}
 		if idx > 0 && !is_selected && (idx - 1) != chosen^ {
-			draw_rectangle(table, sx, inner_y + 3, 1, max(inner_h - 6, 0), graphics.colors.track, el)
+			draw_rectangle(table, sx, inner_y + 3, 1, max(inner_h - 6, 0), theme.track, el)
 		}
 		font := is_selected ? FONT_INTERFACE_BOLD : FONT_INTERFACE
 		shown := text_fit(table, font, labels[idx], max(sw - 8, 0))
 		tw := text_measured_width(table, font, shown)
 		tx := sx + max((sw - tw) / 2, 2)
 		ty := inner_y + (inner_h - LINE) / 2
-		col := disabled ? graphics.colors.dim : (is_selected ? graphics.COLOR_WHITE : (seg_hovered ? graphics.colors.text_strong : graphics.colors.text))
+		col := disabled ? theme.text_dim : (is_selected ? theme.text_on_chosen : (seg_hovered ? theme.text_strong : theme.text))
 		draw_text(table, tx, ty, shown, col, font, opt_id)
 		draw_element_pop(table)
 	}
@@ -470,6 +473,7 @@ tab_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Ident
 	}
 
 	table := frame.table
+	theme := theme_current(frame)
 	el := u32(element)
 	list_states := accessibility.Element_States{.Focusable}
 	if result.focused {
@@ -479,7 +483,7 @@ tab_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Ident
 	defer draw_element_pop(table)
 
 	// Bottom hairline across the full tab strip.
-	draw_rectangle(table, area.x, area.y + area.height - 1, area.width, 1, graphics.colors.track, el)
+	draw_rectangle(table, area.x, area.y + area.height - 1, area.width, 1, theme.track, el)
 
 	cursor_x := area.x
 	right_limit := area.x + area.width
@@ -509,10 +513,10 @@ tab_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Ident
 			set_size        = u32(count),
 		})
 		if is_active {
-			draw_rectangle(table, tab_area.x, tab_area.y, tab_area.width, tab_area.height - TAB_ACCENT_HEIGHT, graphics.colors.card_top, tab_id)
-			draw_rectangle(table, tab_area.x, tab_area.y + tab_area.height - TAB_ACCENT_HEIGHT, tab_area.width, TAB_ACCENT_HEIGHT, graphics.colors.title, tab_id)
+			draw_rectangle(table, tab_area.x, tab_area.y, tab_area.width, tab_area.height - TAB_ACCENT_HEIGHT, theme.card_top, tab_id)
+			draw_rectangle(table, tab_area.x, tab_area.y + tab_area.height - TAB_ACCENT_HEIGHT, tab_area.width, TAB_ACCENT_HEIGHT, theme.accent, tab_id)
 		} else if hovered {
-			draw_rectangle(table, tab_area.x, tab_area.y, tab_area.width, tab_area.height - 1, graphics.colors.track, tab_id)
+			draw_rectangle(table, tab_area.x, tab_area.y, tab_area.width, tab_area.height - 1, theme.track, tab_id)
 		}
 		shown := text_fit(table, font, labels[idx], max(tab_area.width - 8, 0))
 		tw := text_measured_width(table, font, shown)

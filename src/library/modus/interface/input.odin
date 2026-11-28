@@ -312,6 +312,9 @@ Frame :: struct {
 	copied:              []u8, // The text that the element with the focus gives to a copy: memory of the caller, until the end of the frame.
 	copy_given:          bool, // An element took the copy of this frame.
 	paste_taken:         bool, // An element took the paste of this frame, inserted or refused.
+	// Scoped widget theme stack for the current frame (theme.odin).
+	theme_stack:         [THEME_STACK_CAPACITY]Widget_Theme,
+	theme_depth:         int,
 }
 
 // frame_begin clears the table and starts a frame. Tab and Shift+Tab move

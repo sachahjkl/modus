@@ -1,0 +1,3 @@
+type: Added
+
+**Complete stylable widget suite, adaptive collapsing/wrapping toolbars, and `flow_wrap` layout.** Added a scoped `Widget_Theme` stack (`theme_push`/`theme_pop`) across `modus:interface`, an adaptive `toolbar` supporting `.Fold` priority overflow menus and `.Wrap` multi-line group wrapping, `checkbox`/`checkbox_tri`, `radio_group`, `dropdown` (with live-filtering combobox), `multi_select` with removable tag chips, `number_stepper`, `disclosure`, `progress_bar`, `text_area`, `split_pane_divider`, sortable column-resizable multi-select `data_table`, expandable `tree_view`, `tooltip_draw`, `modal_dialog`, `modus:layout.flow_wrap`, and upgraded `interface_elements` onto `modus:layout.Box_Tree`.
